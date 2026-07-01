@@ -1,10 +1,16 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRepositories } from "@/components/providers/RepositoryProvider";
 import { LOCAL_USER_ID } from "@/lib/constants";
+import { DEFAULT_SCHEDULING_STATE } from "@/lib/scheduler";
+import {
+  buildExportFile,
+  parseImportFile,
+  sanitizeFilename,
+} from "@/lib/importExport";
 import type { Deck, Card, CardStats } from "@/lib/types";
 
 interface Props {
@@ -22,6 +28,8 @@ export function DeckDetail({ deckId }: Props) {
   const [editName, setEditName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const [importSummary, setImportSummary] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     const d = await decks.getById(deckId);
@@ -75,6 +83,92 @@ export function DeckDetail({ deckId }: Props) {
     } catch {
       setError("Failed to delete card.");
     }
+  }
+
+  function handleExport() {
+    if (!deck) return;
+    const file = buildExportFile(deck.name, cardList);
+    const blob = new Blob([JSON.stringify(file, null, 2)], {
+      type: "application/json",
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${sanitizeFilename(deck.name)}-flashy-export.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }
+
+  function handleImportClick() {
+    setError(null);
+    setImportSummary(null);
+    fileInputRef.current?.click();
+  }
+
+  async function handleImportFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-selecting the same file later
+    if (!file) return;
+    setError(null);
+    setImportSummary(null);
+
+    let raw: string;
+    try {
+      raw = await file.text();
+    } catch {
+      setError("Failed to read file.");
+      return;
+    }
+
+    const outcome = parseImportFile(raw);
+    if (!outcome.ok) {
+      setError(`Import failed: ${outcome.fileError}. No cards were changed.`);
+      return;
+    }
+    const { cards: parsedCards, errors } = outcome.result;
+
+    // Duplicate = matching front text (existing deck cards + earlier rows in
+    // this same file), per the "cards shouldn't share front text" rule.
+    const existingFronts = new Set(cardList.map((c) => c.front));
+    let imported = 0;
+    let duplicates = 0;
+    for (const pc of parsedCards) {
+      if (existingFronts.has(pc.front)) {
+        duplicates++;
+        continue;
+      }
+      existingFronts.add(pc.front);
+      await cards.create({
+        deckId,
+        ownerId: LOCAL_USER_ID,
+        front: pc.front,
+        back: pc.back,
+        alternateAnswers: pc.alternateAnswers,
+        labels: pc.labels,
+        scheduling: DEFAULT_SCHEDULING_STATE(),
+      });
+      imported++;
+    }
+
+    await load();
+
+    const parts = [`Imported ${imported} card${imported !== 1 ? "s" : ""}.`];
+    if (duplicates > 0) {
+      parts.push(
+        `Skipped ${duplicates} duplicate${duplicates !== 1 ? "s" : ""} (matching front text).`,
+      );
+    }
+    if (errors.length > 0) {
+      const detail = errors
+        .map((er) => `row ${er.index + 1} (${er.reason})`)
+        .join("; ");
+      parts.push(
+        `Skipped ${errors.length} invalid entr${errors.length !== 1 ? "ies" : "y"}: ${detail}.`,
+      );
+    }
+    setImportSummary(parts.join(" "));
   }
 
   if (!deck) return <div className="p-8 text-neutral-500">Loading…</div>;
@@ -159,6 +253,35 @@ export function DeckDetail({ deckId }: Props) {
       )}
 
       {error && <p className="text-sm text-red-500">{error}</p>}
+      {importSummary && (
+        <p className="text-sm text-neutral-600 dark:text-neutral-400">
+          {importSummary}
+        </p>
+      )}
+
+      {/* Import / export */}
+      <div className="flex gap-3">
+        <button
+          onClick={handleExport}
+          disabled={cardList.length === 0}
+          className="rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors disabled:opacity-50"
+        >
+          Export cards
+        </button>
+        <button
+          onClick={handleImportClick}
+          className="rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+        >
+          Import cards
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".json,application/json"
+          onChange={handleImportFile}
+          className="hidden"
+        />
+      </div>
 
       {/* Study / Test actions */}
       <div className="flex gap-3">
