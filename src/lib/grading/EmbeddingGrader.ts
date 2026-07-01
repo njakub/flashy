@@ -60,20 +60,21 @@ function cosineSimilarity(a: Float32Array, b: Float32Array): number {
   return denom === 0 ? 0 : dot / denom;
 }
 
-async function embed(
-  extractor: Awaited<ReturnType<typeof getPipeline>>,
-  text: string,
-): Promise<Float32Array> {
-  const output = await extractor(text, {
-    pooling: "mean",
-    normalize: true,
-  });
-  return output.data as Float32Array;
-}
-
 export class EmbeddingGrader implements Grader {
   private passThreshold: number;
   private failThreshold: number;
+
+  /**
+   * Per-instance embedding cache.  Keys are the raw text strings; values are
+   * the normalised Float32Array embeddings.  Accepted-answer strings are stable
+   * within a session, so they're embedded once and reused on every subsequent
+   * call.  The user's typed answer is also cached (useful when the same phrasing
+   * is submitted across cards, and harmless otherwise).
+   *
+   * The cache lives for the lifetime of the grader instance (one page session)
+   * and is cleared automatically on navigation.
+   */
+  private embeddingCache = new Map<string, Float32Array>();
 
   constructor(
     passThreshold = EMBEDDING_PASS_THRESHOLD,
@@ -83,29 +84,52 @@ export class EmbeddingGrader implements Grader {
     this.failThreshold = failThreshold;
   }
 
+  /** Returns a cached embedding or computes + caches a new one. */
+  private async getCachedEmbedding(
+    extractor: Awaited<ReturnType<typeof getPipeline>>,
+    text: string,
+  ): Promise<Float32Array> {
+    const cached = this.embeddingCache.get(text);
+    if (cached) return cached;
+    const output = await extractor(text, { pooling: "mean", normalize: true });
+    const vec = output.data as Float32Array;
+    this.embeddingCache.set(text, vec);
+    return vec;
+  }
+
   async grade(
     _cardFront: string,
-    correctAnswer: string,
+    correctAnswers: string[],
     userAnswer: string,
   ): Promise<GradeResult> {
+    if (correctAnswers.length === 0) {
+      throw new Error("correctAnswers must contain at least one answer");
+    }
     const extractor = await getPipeline();
-    const [correctVec, userVec] = await Promise.all([
-      embed(extractor, correctAnswer),
-      embed(extractor, userAnswer),
+
+    // Embed all accepted answers + user answer, reusing cache for repeated strings.
+    const [userVec, ...acceptedVecs] = await Promise.all([
+      this.getCachedEmbedding(extractor, userAnswer),
+      ...correctAnswers.map((a) => this.getCachedEmbedding(extractor, a)),
     ]);
 
-    const similarity = cosineSimilarity(correctVec, userVec);
+    // Take the best (maximum) similarity across all accepted answers.
+    let bestSimilarity = 0;
+    for (const vec of acceptedVecs) {
+      const sim = cosineSimilarity(userVec, vec);
+      if (sim > bestSimilarity) bestSimilarity = sim;
+    }
 
     let outcome: GradeResult["outcome"];
-    if (similarity >= this.passThreshold) {
+    if (bestSimilarity >= this.passThreshold) {
       outcome = "correct";
-    } else if (similarity <= this.failThreshold) {
+    } else if (bestSimilarity <= this.failThreshold) {
       outcome = "incorrect";
     } else {
       outcome = "ambiguous";
     }
 
-    return { outcome, similarity };
+    return { outcome, similarity: bestSimilarity };
   }
 }
 

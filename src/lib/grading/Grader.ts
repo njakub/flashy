@@ -10,16 +10,18 @@ import type { GradeResult } from "@/lib/types";
 
 export interface Grader {
   /**
-   * Grade a free-text answer against the correct answer.
+   * Grade a free-text answer against one or more accepted answers.
    *
-   * @param cardFront      The question shown to the user.
-   * @param correctAnswer  The card's back (expected answer).
-   * @param userAnswer     What the user typed.
-   * @returns              A GradeResult with outcome and optional similarity.
+   * @param cardFront       The question shown to the user.
+   * @param correctAnswers  All accepted answers: [card.back, ...card.alternateAnswers].
+   *                        Passes if the user's answer matches ANY of them.
+   * @param userAnswer      What the user typed.
+   * @returns               A GradeResult with outcome and optional similarity.
+   *                        similarity reflects the best match across all accepted answers.
    */
   grade(
     cardFront: string,
-    correctAnswer: string,
+    correctAnswers: string[],
     userAnswer: string,
   ): Promise<GradeResult>;
 }

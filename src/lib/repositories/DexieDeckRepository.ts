@@ -3,9 +3,11 @@ import { db } from "@/lib/db";
 import type { Deck } from "@/lib/types";
 import type { DeckRepository } from "./interfaces";
 import { DexieCardRepository } from "./DexieCardRepository";
+import { DexieTestRunRepository } from "./DexieTestRunRepository";
 
 export class DexieDeckRepository implements DeckRepository {
   private cardRepo = new DexieCardRepository();
+  private testRunRepo = new DexieTestRunRepository();
 
   async getAll(ownerId: string): Promise<Deck[]> {
     return db.decks.where("ownerId").equals(ownerId).toArray();
@@ -37,11 +39,16 @@ export class DexieDeckRepository implements DeckRepository {
     return updated;
   }
 
-  /** Cascade: deletes all cards belonging to this deck, then the deck. */
+  /** Cascade: deletes cards, test history, then the deck. */
   async delete(id: string): Promise<void> {
-    await db.transaction("rw", [db.decks, db.cards], async () => {
-      await this.cardRepo.deleteByDeck(id);
-      await db.decks.delete(id);
-    });
+    await db.transaction(
+      "rw",
+      [db.decks, db.cards, db.testRuns, db.testRunQuestions],
+      async () => {
+        await this.cardRepo.deleteByDeck(id);
+        await this.testRunRepo.deleteByDeck(id);
+        await db.decks.delete(id);
+      },
+    );
   }
 }

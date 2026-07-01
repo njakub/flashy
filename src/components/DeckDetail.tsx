@@ -5,18 +5,19 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRepositories } from "@/components/providers/RepositoryProvider";
 import { LOCAL_USER_ID } from "@/lib/constants";
-import type { Deck, Card } from "@/lib/types";
+import type { Deck, Card, CardStats } from "@/lib/types";
 
 interface Props {
   deckId: string;
 }
 
 export function DeckDetail({ deckId }: Props) {
-  const { decks, cards } = useRepositories();
+  const { decks, cards, testRuns } = useRepositories();
   const router = useRouter();
   const [deck, setDeck] = useState<Deck | null>(null);
   const [cardList, setCardList] = useState<Card[]>([]);
   const [dueCount, setDueCount] = useState(0);
+  const [statsMap, setStatsMap] = useState<Map<string, CardStats>>(new Map());
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +35,10 @@ export function DeckDetail({ deckId }: Props) {
     setCardList(c.sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
     const due = await cards.getDueCards(deckId, new Date());
     setDueCount(due.length);
-  }, [deckId, decks, cards, router]);
+    // Single grouped pass — O(history size for this deck).
+    const statsList = await testRuns.getStatsByCards(c.map((x) => x.id));
+    setStatsMap(new Map(statsList.map((s) => [s.cardId, s])));
+  }, [deckId, decks, cards, testRuns, router]);
 
   useEffect(() => {
     load();
@@ -195,6 +199,29 @@ export function DeckDetail({ deckId }: Props) {
                 <p className="text-xs text-neutral-400 truncate mt-0.5">
                   {card.back}
                 </p>
+                {(() => {
+                  const s = statsMap.get(card.id);
+                  if (!s || s.attempts === 0) return null;
+                  const pct = Math.round((s.correct / s.attempts) * 100);
+                  return (
+                    <p className="text-xs text-neutral-400 mt-0.5">
+                      {s.attempts} attempt{s.attempts !== 1 ? "s" : ""} · {pct}%
+                      correct
+                    </p>
+                  );
+                })()}
+                {(card.labels ?? []).length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {(card.labels ?? []).map((l) => (
+                      <span
+                        key={l}
+                        className="rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 text-xs px-1.5 py-0.5"
+                      >
+                        {l}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
               <div className="flex gap-2 shrink-0">
                 <Link

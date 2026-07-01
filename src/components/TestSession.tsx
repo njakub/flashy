@@ -14,7 +14,8 @@ import {
   EmbeddingGrader,
   preloadEmbeddingModel,
 } from "@/lib/grading/EmbeddingGrader";
-import type { Card, GradeResult } from "@/lib/types";
+import type { Card, GradeResult, TestRunQuestion } from "@/lib/types";
+import { LOCAL_USER_ID } from "@/lib/constants";
 
 /**
  * TestSession — free-text answer mode with local-embedding grading.
@@ -52,12 +53,12 @@ function sample<T>(arr: T[], n: number): T[] {
 }
 
 export function TestSession({ deckId }: Props) {
-  const { cards } = useRepositories();
+  const { cards, testRuns } = useRepositories();
 
   // Phase 2 seam: swap grader implementation here.
   const grader = useRef(new EmbeddingGrader());
 
-  const [pool, setPool] = useState<Card[]>([]); // full due-card pool for the session
+  const [pool, setPool] = useState<Card[]>([]); // full deck card pool
   const [queue, setQueue] = useState<Card[]>([]); // current run's random subset
   const [currentIndex, setCurrentIndex] = useState(0);
   const [phase, setPhase] = useState<SessionPhase>("loading");
@@ -68,6 +69,16 @@ export function TestSession({ deckId }: Props) {
   const [reviewed, setReviewed] = useState(0);
   const [correct, setCorrect] = useState(0);
   const answerRef = useRef<HTMLTextAreaElement>(null);
+
+  // Accumulated per-question outcomes for the run; flushed to DB on completion.
+  const questionLog = useRef<Omit<TestRunQuestion, "id" | "runId">[]>([]);
+  // ISO timestamp of when the current run started.
+  const runStartedAt = useRef<string>("");
+
+  // "Add alternate answer" state — shown on incorrect/ambiguous result screens.
+  const [addingAlternate, setAddingAlternate] = useState(false);
+  const [alternateInput, setAlternateInput] = useState("");
+  const [alternateSaving, setAlternateSaving] = useState(false);
 
   // Fetch ALL cards in the deck (no due-date filter) and go to count-selection.
   // Test mode is a random quiz over the full deck; due-date filtering belongs
@@ -90,6 +101,8 @@ export function TestSession({ deckId }: Props) {
     setGradeResult(null);
     setReviewed(0);
     setCorrect(0);
+    questionLog.current = [];
+    runStartedAt.current = new Date().toISOString();
     setPhase("question");
   }
 
@@ -105,6 +118,11 @@ export function TestSession({ deckId }: Props) {
 
   const current = queue[currentIndex] ?? null;
 
+  /** All accepted answers for the current card (primary + alternates). */
+  function acceptedAnswers(card: Card): string[] {
+    return [card.back, ...(card.alternateAnswers ?? [])];
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     const answer = userAnswer.trim();
@@ -115,7 +133,7 @@ export function TestSession({ deckId }: Props) {
     try {
       const result = await grader.current.grade(
         current.front,
-        current.back,
+        acceptedAnswers(current),
         answer,
       );
       setGradeResult(result);
@@ -123,7 +141,7 @@ export function TestSession({ deckId }: Props) {
         setPhase("ambiguous");
       } else {
         setPhase("result");
-        await persistGrade(result.outcome === "correct");
+        await persistGrade(result.outcome === "correct", result.similarity);
       }
     } catch (err) {
       // Log full stack so the trace is visible in Firefox DevTools console.
@@ -139,32 +157,93 @@ export function TestSession({ deckId }: Props) {
     }
   }
 
-  async function persistGrade(isCorrect: boolean) {
+  async function persistGrade(isCorrect: boolean, similarity?: number) {
     if (!current) return;
     const rating = isCorrect ? "good" : "again";
     const nextState = scheduler.review(current.scheduling, rating);
     await cards.update(current.id, { scheduling: nextState });
+
+    // Record this question outcome for history — "ambiguous" is never stored,
+    // outcome is always the final resolved value.
+    questionLog.current.push({
+      cardId: current.id,
+      cardFrontSnapshot: current.front,
+      cardBackSnapshot: current.back,
+      userAnswer,
+      outcome: isCorrect ? "correct" : "incorrect",
+      similarity,
+    });
+
     setReviewed((r) => r + 1);
     if (isCorrect) setCorrect((c) => c + 1);
   }
 
   async function handleSelfGrade(isCorrect: boolean) {
-    await persistGrade(isCorrect);
+    await persistGrade(isCorrect, gradeResult?.similarity);
     setPhase("result");
     setGradeResult((r) =>
       r ? { ...r, outcome: isCorrect ? "correct" : "incorrect" } : r,
     );
   }
 
+  /** Save a completed run to history, then transition to the done screen. */
+  async function finishRun() {
+    const completedAt = new Date().toISOString();
+    const log = questionLog.current;
+    const correctCount = log.filter((q) => q.outcome === "correct").length;
+    try {
+      await testRuns.saveRun(
+        {
+          ownerId: LOCAL_USER_ID,
+          deckId,
+          startedAt: runStartedAt.current || completedAt,
+          completedAt,
+          questionCount: log.length,
+          correctCount,
+        },
+        log,
+      );
+    } catch (err) {
+      // History save failures are non-fatal — the user still sees the results.
+      console.error("Failed to save test run:", err);
+    }
+    setPhase("done");
+  }
+
   function advance() {
+    // Reset "add alternate" state between questions.
+    setAddingAlternate(false);
+    setAlternateInput("");
     const next = currentIndex + 1;
     if (next >= queue.length) {
-      setPhase("done");
+      finishRun();
     } else {
       setCurrentIndex(next);
       setUserAnswer("");
       setGradeResult(null);
       setPhase("question");
+    }
+  }
+
+  /** Save a new alternate answer to the current card immediately. */
+  async function handleSaveAlternate() {
+    const alt = alternateInput.trim();
+    if (!alt || !current) return;
+    setAlternateSaving(true);
+    try {
+      const updated = await cards.update(current.id, {
+        alternateAnswers: [...(current.alternateAnswers ?? []), alt],
+      });
+      // Patch the card in the queue so subsequent grading picks up the new alternate.
+      setQueue((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      // Also patch the pool so future runs include it.
+      setPool((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      setAlternateInput("");
+      setAddingAlternate(false);
+    } catch (err) {
+      console.error("Failed to save alternate answer:", err);
+    } finally {
+      setAlternateSaving(false);
     }
   }
 
@@ -389,6 +468,48 @@ export function TestSession({ deckId }: Props) {
                 I was wrong
               </button>
             </div>
+
+            {/* Add alternate answer affordance — optional, never blocking */}
+            {!addingAlternate ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setAddingAlternate(true);
+                  setAlternateInput(userAnswer);
+                }}
+                className="text-xs text-neutral-400 hover:text-indigo-600 transition-colors underline"
+              >
+                My phrasing should also be accepted — add as alternate answer
+              </button>
+            ) : (
+              <div className="flex gap-2 items-center">
+                <input
+                  type="text"
+                  value={alternateInput}
+                  onChange={(e) => setAlternateInput(e.target.value)}
+                  placeholder="Alternate accepted phrasing…"
+                  className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+                <button
+                  type="button"
+                  onClick={handleSaveAlternate}
+                  disabled={!alternateInput.trim() || alternateSaving}
+                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+                >
+                  {alternateSaving ? "Saving…" : "Save"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddingAlternate(false);
+                    setAlternateInput("");
+                  }}
+                  className="text-xs text-neutral-400 hover:text-neutral-600 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -432,6 +553,52 @@ export function TestSession({ deckId }: Props) {
               </div>
             </div>
           </div>
+
+          {/* Add alternate answer — only shown on incorrect results */}
+          {gradeResult.outcome === "incorrect" && (
+            <div className="rounded-lg border border-neutral-200 dark:border-neutral-700 px-4 py-3">
+              {!addingAlternate ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAddingAlternate(true);
+                    setAlternateInput(userAnswer);
+                  }}
+                  className="text-xs text-neutral-400 hover:text-indigo-600 transition-colors underline"
+                >
+                  My phrasing should also be accepted — add as alternate answer
+                </button>
+              ) : (
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    value={alternateInput}
+                    onChange={(e) => setAlternateInput(e.target.value)}
+                    placeholder="Alternate accepted phrasing…"
+                    className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveAlternate}
+                    disabled={!alternateInput.trim() || alternateSaving}
+                    className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+                  >
+                    {alternateSaving ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddingAlternate(false);
+                      setAlternateInput("");
+                    }}
+                    className="text-xs text-neutral-400 hover:text-neutral-600 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
 
           <button
             onClick={advance}

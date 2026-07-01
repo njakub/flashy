@@ -39,7 +39,12 @@ export class DexieCardRepository implements CardRepository {
 
   async update(
     id: string,
-    patch: Partial<Pick<Card, "front" | "back" | "scheduling">>,
+    patch: Partial<
+      Pick<
+        Card,
+        "front" | "back" | "alternateAnswers" | "labels" | "scheduling"
+      >
+    >,
   ): Promise<Card> {
     const updatedAt = new Date().toISOString();
     await db.cards.update(id, { ...patch, updatedAt });
