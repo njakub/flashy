@@ -64,8 +64,18 @@ export interface TestRunRepository {
   /** All runs for a deck, newest first. */
   getRunsByDeck(deckId: string): Promise<TestRun[]>;
 
+  /** Single run lookup — e.g. for a run-detail screen. */
+  getRunById(id: string): Promise<TestRun | undefined>;
+
   /** All question attempts for a single run. */
   getQuestionsForRun(runId: string): Promise<TestRunQuestion[]>;
+
+  /**
+   * All question attempts across a set of runs — one grouped query, not one
+   * query per run. Used by the test-history screen (label aggregation,
+   * label-filtered run list).
+   */
+  getQuestionsForRuns(runIds: string[]): Promise<TestRunQuestion[]>;
 
   /**
    * Per-card stats for a set of card ids — one grouped query, not N queries.

@@ -1,26 +1,166 @@
 @import "tailwindcss";
 
+/*
+ * Design tokens — mirrors src/lib/theme.ts (the "Slate & Indigo" system from
+ * the Flashcard App Redesign Claude Design project). theme.ts is the
+ * framework-agnostic source of truth; this file is the web-only bridge that
+ * turns it into Tailwind utilities via CSS custom properties. Keep the two
+ * in sync by hand — there's no build-time codegen between them.
+ *
+ * Palette variables are defined once per color-scheme (light default, dark
+ * under the media query) and indirected through @theme so every generated
+ * utility (bg-surface-1, text-ink-2, border-line, etc.) resolves to the
+ * right value automatically — components don't need `dark:` variants for
+ * these tokens.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --t-bg0: #f4f5f7;
+  --t-bg1: #ffffff;
+  --t-bg2: #ffffff;
+  --t-bg3: #eef0f4;
+  --t-line: #e4e7ec;
+  --t-line2: #d5dae2;
+  --t-ink1: #141821;
+  --t-ink2: #5c6675;
+  --t-ink3: #8b94a3;
+  --t-accent: #4d5fe0;
+  --t-accent-hi: #3a4cd0;
+  --t-accent-soft: rgba(77, 95, 224, 0.11);
+  --t-correct: #2f9e6e;
+  --t-correct-soft: rgba(47, 158, 110, 0.12);
+  --t-incorrect: #d15a4e;
+  --t-incorrect-soft: rgba(209, 90, 78, 0.12);
+  --t-self-grade: #b9832f;
+  --t-self-grade-soft: rgba(185, 131, 47, 0.13);
+  --t-on-accent: #ffffff;
+  --t-on-semantic: #0f1218;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --t-bg0: #0f1218;
+    --t-bg1: #161a22;
+    --t-bg2: #1d222c;
+    --t-bg3: #242a36;
+    --t-line: #272d39;
+    --t-line2: #333b4a;
+    --t-ink1: #eef1f7;
+    --t-ink2: #a2abbc;
+    --t-ink3: #68717f;
+    --t-accent: #6879f0;
+    --t-accent-hi: #8b97f5;
+    --t-accent-soft: rgba(104, 121, 240, 0.16);
+    --t-correct: #4fbf92;
+    --t-correct-soft: rgba(79, 191, 146, 0.15);
+    --t-incorrect: #e37b70;
+    --t-incorrect-soft: rgba(227, 123, 112, 0.15);
+    --t-self-grade: #d3a45c;
+    --t-self-grade-soft: rgba(211, 164, 92, 0.15);
+  }
+}
+
+@theme inline {
+  --font-sans: var(--font-hanken);
+  --font-mono: var(--font-plex-mono);
+
+  --color-surface-0: var(--t-bg0);
+  --color-surface-1: var(--t-bg1);
+  --color-surface-2: var(--t-bg2);
+  --color-surface-3: var(--t-bg3);
+  --color-line: var(--t-line);
+  --color-line-2: var(--t-line2);
+  --color-ink-1: var(--t-ink1);
+  --color-ink-2: var(--t-ink2);
+  --color-ink-3: var(--t-ink3);
+  --color-accent: var(--t-accent);
+  --color-accent-hi: var(--t-accent-hi);
+  --color-accent-soft: var(--t-accent-soft);
+  --color-correct: var(--t-correct);
+  --color-correct-soft: var(--t-correct-soft);
+  --color-incorrect: var(--t-incorrect);
+  --color-incorrect-soft: var(--t-incorrect-soft);
+  --color-self-grade: var(--t-self-grade);
+  --color-self-grade-soft: var(--t-self-grade-soft);
+  --color-on-accent: var(--t-on-accent);
+  --color-on-semantic: var(--t-on-semantic);
+
+  /* Named by usage, not a generic scale — see src/lib/theme.ts `radius`. */
+  --radius-chip: 8px;
+  --radius-icon: 12px;
+  --radius-segment: 13px;
+  --radius-control: 14px;
+  --radius-row: 16px;
+  --radius-card: 20px;
+  --radius-pill: 9999px;
+}
+
+/*
+ * Compound type-scale utilities — see src/lib/theme.ts `type`. Tailwind's
+ * built-in text-size utilities only carry one property each, and this scale
+ * bundles size/weight/line-height/tracking per named style so components
+ * reuse one class instead of repeating four values.
+ */
+@layer utilities {
+  .text-display {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -0.02em;
+  }
+  .text-title {
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.2;
+    letter-spacing: -0.01em;
+  }
+  .text-card-front {
+    font-size: 26px;
+    font-weight: 500;
+    line-height: 1.32;
+    letter-spacing: -0.01em;
+  }
+  .text-card-back {
+    font-size: 25px;
+    font-weight: 500;
+    line-height: 1.34;
+    letter-spacing: -0.01em;
+  }
+  .text-body {
+    font-size: 16px;
+    font-weight: 500;
+    line-height: 1.35;
+  }
+  .text-meta {
+    font-size: 13px;
+    font-weight: 400;
+    line-height: 1.4;
+  }
+  .text-micro {
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.3;
+  }
+  .text-stat {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.2;
+  }
+  .text-big-score {
+    font-family: var(--font-mono);
+    font-size: 72px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.03em;
+  }
+  .text-button {
+    font-size: 15px;
+    font-weight: 600;
+    line-height: 1;
   }
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--t-bg0);
+  color: var(--t-ink1);
 }

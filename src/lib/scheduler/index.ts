@@ -26,6 +26,7 @@ export function DEFAULT_SCHEDULING_STATE(): SchedulingState {
     dueAt: new Date().toISOString(), // due immediately
     reps: 0,
     lapses: 0,
+    lastReviewedAt: null,
   };
 }
 
@@ -67,6 +68,7 @@ function daysFromNow(days: number): string {
 const sm2Scheduler: Scheduler = {
   review(state: SchedulingState, rating: RecallRating): SchedulingState {
     const grade = GRADE[rating];
+    const lastReviewedAt = new Date().toISOString();
 
     // Update ease factor (SM-2 formula)
     const easeDelta = 0.1 - (5 - grade) * (0.08 + (5 - grade) * 0.02);
@@ -80,6 +82,7 @@ const sm2Scheduler: Scheduler = {
         dueAt: daysFromNow(1),
         reps: state.reps,
         lapses: state.lapses + 1,
+        lastReviewedAt,
       };
     }
 
@@ -99,6 +102,7 @@ const sm2Scheduler: Scheduler = {
       dueAt: daysFromNow(nextInterval),
       reps: state.reps + 1,
       lapses: state.lapses,
+      lastReviewedAt,
     };
   },
 };

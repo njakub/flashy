@@ -1,14 +1,24 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useCallback } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRepositories } from "@/components/providers/RepositoryProvider";
-import { LOCAL_USER_ID } from "@/lib/constants";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { useReloadOnSync } from "@/lib/sync/useReloadOnSync";
 import type { Deck } from "@/lib/types";
+
+/** Two-letter monogram for the deck icon — presentational only. */
+function initials(name: string): string {
+  const words = name.trim().split(/\s+/).filter(Boolean);
+  if (words.length === 0) return "";
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
 
 export function DeckList() {
   const { decks, cards } = useRepositories();
+  const { ownerId } = useAuth();
   const router = useRouter();
   const [deckList, setDeckList] = useState<Deck[]>([]);
   const [cardCounts, setCardCounts] = useState<Record<string, number>>({});
@@ -17,7 +27,7 @@ export function DeckList() {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const d = await decks.getAll(LOCAL_USER_ID);
+    const d = await decks.getAll(ownerId);
     setDeckList(d.sort((a, b) => a.name.localeCompare(b.name)));
     const counts: Record<string, number> = {};
     await Promise.all(
@@ -27,11 +37,9 @@ export function DeckList() {
       }),
     );
     setCardCounts(counts);
-  }, [decks, cards]);
+  }, [decks, cards, ownerId]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useReloadOnSync(load);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -40,7 +48,7 @@ export function DeckList() {
     setCreating(true);
     setError(null);
     try {
-      const deck = await decks.create({ name, ownerId: LOCAL_USER_ID });
+      const deck = await decks.create({ name, ownerId });
       setNewName("");
       await load();
       router.push(`/decks/${deck.id}`);
@@ -52,8 +60,8 @@ export function DeckList() {
   }
 
   return (
-    <div className="max-w-xl mx-auto py-10 px-4 space-y-8">
-      <h1 className="text-3xl font-bold tracking-tight">Flashy</h1>
+    <div className="w-full max-w-xl mx-auto py-10 px-4 space-y-6">
+      <h1 className="text-display tracking-tight">Decks</h1>
 
       {/* Create deck */}
       <form onSubmit={handleCreate} className="flex gap-2">
@@ -62,39 +70,44 @@ export function DeckList() {
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
           placeholder="New deck name…"
-          className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          className="flex-1 rounded-control bg-surface-2 border border-line-2 px-4 py-3 text-base text-ink-1 placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-accent"
           maxLength={120}
         />
         <button
           type="submit"
           disabled={creating || !newName.trim()}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+          className="text-button rounded-control bg-accent text-on-accent px-5 min-h-12 hover:opacity-90 disabled:opacity-50 transition-opacity"
         >
           Create
         </button>
       </form>
-      {error && <p className="text-sm text-red-500">{error}</p>}
+      {error && <p className="text-meta text-incorrect">{error}</p>}
 
       {/* Deck list */}
       {deckList.length === 0 ? (
-        <p className="text-neutral-500 text-sm">
-          No decks yet. Create one above.
-        </p>
+        <p className="text-meta text-ink-3">No decks yet. Create one above.</p>
       ) : (
-        <ul className="space-y-2">
+        <ul className="flex flex-col gap-3">
           {deckList.map((deck) => (
             <li key={deck.id}>
               <Link
                 href={`/decks/${deck.id}`}
-                className="flex items-center justify-between rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-3 hover:border-indigo-400 transition-colors group"
+                className="flex items-center gap-4 rounded-row bg-surface-1 border border-line px-4 py-4 hover:border-accent transition-colors group"
               >
-                <span className="font-medium group-hover:text-indigo-600 transition-colors">
-                  {deck.name}
-                </span>
-                <span className="text-xs text-neutral-400">
-                  {cardCounts[deck.id] ?? 0} card
-                  {cardCounts[deck.id] !== 1 ? "s" : ""}
-                </span>
+                <div className="flex-none w-11 h-11 rounded-icon bg-accent-soft flex items-center justify-center">
+                  <span className="text-button text-accent-hi">
+                    {initials(deck.name)}
+                  </span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-body text-ink-1 tracking-tight truncate group-hover:text-accent-hi transition-colors">
+                    {deck.name}
+                  </p>
+                  <p className="text-meta text-ink-3 mt-0.5">
+                    {cardCounts[deck.id] ?? 0} card
+                    {cardCounts[deck.id] !== 1 ? "s" : ""}
+                  </p>
+                </div>
               </Link>
             </li>
           ))}

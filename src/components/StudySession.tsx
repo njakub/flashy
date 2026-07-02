@@ -18,10 +18,10 @@ const RATINGS: { value: RecallRating; label: string; description: string }[] = [
 ];
 
 const RATING_COLORS: Record<RecallRating, string> = {
-  again: "bg-red-600 hover:bg-red-500",
-  hard: "bg-orange-500 hover:bg-orange-400",
-  good: "bg-green-600 hover:bg-green-500",
-  easy: "bg-sky-600 hover:bg-sky-500",
+  again: "bg-incorrect-soft border-incorrect-soft text-incorrect",
+  hard: "bg-surface-2 border-line-2 text-self-grade",
+  good: "bg-surface-2 border-line-2 text-ink-1",
+  easy: "bg-correct-soft border-correct-soft text-correct",
 };
 
 export function StudySession({ deckId }: Props) {
@@ -63,21 +63,29 @@ export function StudySession({ deckId }: Props) {
     }
   }
 
-  if (loading) return <div className="p-8 text-neutral-500">Loading…</div>;
+  if (loading) return <div className="p-8 text-ink-3">Loading…</div>;
 
   return (
-    <div className="max-w-xl mx-auto py-10 px-4 space-y-6">
+    <div className="w-full max-w-xl mx-auto py-10 px-4 space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Study session</h2>
-        <span className="text-sm text-neutral-400">
+        <h2 className="text-title">Study session</h2>
+        <span className="text-stat text-ink-2">
           {done ? queue.length : currentIndex + 1} / {queue.length}
         </span>
       </div>
+      {!done && queue.length > 0 && (
+        <div className="h-1 rounded-pill bg-surface-2 overflow-hidden">
+          <div
+            className="h-full rounded-pill bg-accent transition-all"
+            style={{ width: `${(currentIndex / queue.length) * 100}%` }}
+          />
+        </div>
+      )}
 
       {done ? (
-        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-8 text-center space-y-4">
+        <div className="rounded-card border border-line bg-surface-1 p-8 text-center space-y-4">
           <p className="text-2xl">🎉</p>
-          <p className="font-semibold">
+          <p className="text-body">
             {queue.length === 0
               ? "This deck has no cards yet."
               : `Session complete — reviewed ${reviewed} card${reviewed !== 1 ? "s" : ""}.`}
@@ -85,13 +93,13 @@ export function StudySession({ deckId }: Props) {
           <div className="flex justify-center gap-3">
             <button
               onClick={load}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors"
+              className="text-button rounded-control bg-accent text-on-accent px-5 py-3 hover:opacity-90 transition-opacity"
             >
               Restart
             </button>
             <Link
               href={`/decks/${deckId}`}
-              className="rounded-lg border border-neutral-300 dark:border-neutral-700 px-4 py-2 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
+              className="text-button rounded-control border border-line-2 text-ink-2 px-5 py-3 hover:bg-surface-2 transition-colors"
             >
               Back to deck
             </Link>
@@ -99,40 +107,45 @@ export function StudySession({ deckId }: Props) {
         </div>
       ) : (
         <div className="space-y-4">
-          {/* Card front */}
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 min-h-[140px] flex items-center justify-center text-center">
-            <p className="text-lg whitespace-pre-wrap">{current?.front}</p>
+          <div className="rounded-card bg-surface-1 border border-line p-7 min-h-[220px] flex flex-col gap-5">
+            <p
+              className={`text-card-front flex-1 flex items-center whitespace-pre-wrap ${
+                revealed ? "text-ink-2" : "text-ink-1"
+              }`}
+            >
+              {current?.front}
+            </p>
+            {revealed && (
+              <>
+                <div className="h-px bg-line" />
+                <p className="text-card-back text-accent-hi whitespace-pre-wrap">
+                  {current?.back}
+                </p>
+              </>
+            )}
           </div>
 
           {!revealed ? (
             <button
               onClick={() => setRevealed(true)}
-              className="w-full rounded-xl border border-dashed border-indigo-400 py-3 text-sm text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-950 transition-colors font-medium"
+              className="w-full rounded-control border border-dashed border-line-2 text-ink-2 text-meta py-3 hover:bg-surface-2 transition-colors"
             >
-              Reveal answer
+              Tap to reveal answer
             </button>
           ) : (
-            <div className="space-y-4">
-              {/* Card back */}
-              <div className="rounded-xl border border-indigo-200 dark:border-indigo-800 bg-indigo-50 dark:bg-indigo-950 p-6 min-h-[100px] flex items-center justify-center text-center">
-                <p className="text-base whitespace-pre-wrap">{current?.back}</p>
-              </div>
-
-              {/* Recall rating buttons */}
-              <div className="grid grid-cols-4 gap-2">
-                {RATINGS.map(({ value, label, description }) => (
-                  <button
-                    key={value}
-                    onClick={() => handleRate(value)}
-                    className={`rounded-lg px-2 py-3 text-white text-sm font-semibold transition-colors ${RATING_COLORS[value]}`}
-                  >
-                    <div>{label}</div>
-                    <div className="text-xs font-normal opacity-80 mt-0.5">
-                      {description}
-                    </div>
-                  </button>
-                ))}
-              </div>
+            <div className="grid grid-cols-4 gap-2">
+              {RATINGS.map(({ value, label, description }) => (
+                <button
+                  key={value}
+                  onClick={() => handleRate(value)}
+                  className={`rounded-control border px-1 py-3 text-center transition-colors ${RATING_COLORS[value]}`}
+                >
+                  <div className="text-[13px] font-semibold">{label}</div>
+                  <div className="text-[10px] font-normal opacity-70 mt-0.5">
+                    {description}
+                  </div>
+                </button>
+              ))}
             </div>
           )}
         </div>
@@ -140,7 +153,7 @@ export function StudySession({ deckId }: Props) {
 
       <Link
         href={`/decks/${deckId}`}
-        className="inline-block text-sm text-neutral-400 hover:text-neutral-700 transition-colors"
+        className="inline-block text-meta text-ink-3 hover:text-ink-1 transition-colors"
       >
         ← Back to deck
       </Link>

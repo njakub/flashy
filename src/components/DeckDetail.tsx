@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useCallback, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useRepositories } from "@/components/providers/RepositoryProvider";
-import { LOCAL_USER_ID } from "@/lib/constants";
+import { useAuth } from "@/components/providers/AuthProvider";
+import { useReloadOnSync } from "@/lib/sync/useReloadOnSync";
 import { DEFAULT_SCHEDULING_STATE } from "@/lib/scheduler";
 import {
   buildExportFile,
@@ -19,6 +20,7 @@ interface Props {
 
 export function DeckDetail({ deckId }: Props) {
   const { decks, cards, testRuns } = useRepositories();
+  const { ownerId } = useAuth();
   const router = useRouter();
   const [deck, setDeck] = useState<Deck | null>(null);
   const [cardList, setCardList] = useState<Card[]>([]);
@@ -48,9 +50,7 @@ export function DeckDetail({ deckId }: Props) {
     setStatsMap(new Map(statsList.map((s) => [s.cardId, s])));
   }, [deckId, decks, cards, testRuns, router]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  useReloadOnSync(load);
 
   async function handleRename(e: React.FormEvent) {
     e.preventDefault();
@@ -142,7 +142,7 @@ export function DeckDetail({ deckId }: Props) {
       existingFronts.add(pc.front);
       await cards.create({
         deckId,
-        ownerId: LOCAL_USER_ID,
+        ownerId,
         front: pc.front,
         back: pc.back,
         alternateAnswers: pc.alternateAnswers,
@@ -171,10 +171,17 @@ export function DeckDetail({ deckId }: Props) {
     setImportSummary(parts.join(" "));
   }
 
-  if (!deck) return <div className="p-8 text-neutral-500">Loading…</div>;
+  if (!deck) return <div className="p-8 text-ink-3">Loading…</div>;
+
+  const totals = Array.from(statsMap.values()).reduce(
+    (acc, s) => ({ attempts: acc.attempts + s.attempts, correct: acc.correct + s.correct }),
+    { attempts: 0, correct: 0 },
+  );
+  const avgAccuracy =
+    totals.attempts > 0 ? Math.round((totals.correct / totals.attempts) * 100) : null;
 
   return (
-    <div className="max-w-2xl mx-auto py-10 px-4 space-y-8">
+    <div className="w-full max-w-2xl mx-auto py-10 px-4 space-y-6">
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1">
@@ -185,12 +192,12 @@ export function DeckDetail({ deckId }: Props) {
                 type="text"
                 value={editName}
                 onChange={(e) => setEditName(e.target.value)}
-                className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-lg font-bold focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                className="flex-1 rounded-control bg-surface-2 border border-line-2 px-4 py-3 text-title focus:outline-none focus:ring-2 focus:ring-accent"
                 maxLength={120}
               />
               <button
                 type="submit"
-                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors"
+                className="text-button rounded-control bg-accent text-on-accent px-5 hover:opacity-90 transition-opacity"
               >
                 Save
               </button>
@@ -200,13 +207,19 @@ export function DeckDetail({ deckId }: Props) {
                   setEditing(false);
                   setEditName(deck.name);
                 }}
-                className="rounded-lg border border-neutral-300 dark:border-neutral-700 px-4 py-2 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
+                className="text-button rounded-control border border-line-2 text-ink-2 px-5 hover:bg-surface-2 transition-colors"
               >
                 Cancel
               </button>
             </form>
           ) : (
-            <h1 className="text-2xl font-bold">{deck.name}</h1>
+            <>
+              <h1 className="text-title tracking-tight">{deck.name}</h1>
+              <p className="text-meta text-ink-2 mt-1">
+                {cardList.length} card{cardList.length !== 1 ? "s" : ""}
+                {avgAccuracy !== null && ` · ${avgAccuracy}% average accuracy`}
+              </p>
+            </>
           )}
         </div>
 
@@ -214,13 +227,13 @@ export function DeckDetail({ deckId }: Props) {
           <div className="flex gap-2 shrink-0">
             <button
               onClick={() => setEditing(true)}
-              className="rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+              className="text-micro rounded-chip border border-line-2 text-ink-2 px-3 py-1.5 hover:bg-surface-2 transition-colors"
             >
               Rename
             </button>
             <button
               onClick={() => setConfirmDelete(true)}
-              className="rounded-lg border border-red-300 text-red-600 px-3 py-1.5 text-sm hover:bg-red-50 dark:hover:bg-red-950 transition-colors"
+              className="text-micro rounded-chip border border-incorrect-soft text-incorrect px-3 py-1.5 hover:bg-incorrect-soft transition-colors"
             >
               Delete deck
             </button>
@@ -230,21 +243,21 @@ export function DeckDetail({ deckId }: Props) {
 
       {/* Confirm delete deck */}
       {confirmDelete && (
-        <div className="rounded-lg border border-red-300 bg-red-50 dark:bg-red-950 p-4 space-y-3">
-          <p className="text-sm text-red-700 dark:text-red-300 font-medium">
+        <div className="rounded-card border border-incorrect-soft bg-incorrect-soft p-4 space-y-3">
+          <p className="text-meta text-incorrect font-semibold">
             Delete &ldquo;{deck.name}&rdquo; and all {cardList.length} card
             {cardList.length !== 1 ? "s" : ""}? This cannot be undone.
           </p>
           <div className="flex gap-2">
             <button
               onClick={handleDeleteDeck}
-              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 transition-colors"
+              className="text-button rounded-control bg-incorrect text-on-accent px-5 hover:opacity-90 transition-opacity"
             >
               Yes, delete everything
             </button>
             <button
               onClick={() => setConfirmDelete(false)}
-              className="rounded-lg border border-neutral-300 dark:border-neutral-700 px-4 py-2 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
+              className="text-button rounded-control border border-line-2 text-ink-2 px-5 hover:bg-surface-2 transition-colors"
             >
               Cancel
             </button>
@@ -252,25 +265,43 @@ export function DeckDetail({ deckId }: Props) {
         </div>
       )}
 
-      {error && <p className="text-sm text-red-500">{error}</p>}
-      {importSummary && (
-        <p className="text-sm text-neutral-600 dark:text-neutral-400">
-          {importSummary}
-        </p>
-      )}
+      {error && <p className="text-meta text-incorrect">{error}</p>}
+      {importSummary && <p className="text-meta text-ink-2">{importSummary}</p>}
+
+      {/* Study / Test actions */}
+      <div className="flex gap-2">
+        <Link
+          href={`/decks/${deckId}/study`}
+          className="flex-[1.5] text-center text-button rounded-control bg-accent text-on-accent px-4 py-3 hover:opacity-90 transition-opacity"
+        >
+          Study · {dueCount} due
+        </Link>
+        <Link
+          href={`/decks/${deckId}/test`}
+          className="flex-1 text-center text-button rounded-control bg-surface-3 border border-line-2 text-ink-1 px-4 py-3 hover:border-accent transition-colors"
+        >
+          Test
+        </Link>
+        <Link
+          href={`/decks/${deckId}/history`}
+          className="flex-1 text-center text-button rounded-control bg-surface-3 border border-line-2 text-ink-1 px-4 py-3 hover:border-accent transition-colors"
+        >
+          History
+        </Link>
+      </div>
 
       {/* Import / export */}
-      <div className="flex gap-3">
+      <div className="flex gap-2">
         <button
           onClick={handleExport}
           disabled={cardList.length === 0}
-          className="rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors disabled:opacity-50"
+          className="text-micro rounded-chip border border-line text-ink-2 px-3 py-1.5 hover:bg-surface-2 transition-colors disabled:opacity-50"
         >
           Export cards
         </button>
         <button
           onClick={handleImportClick}
-          className="rounded-lg border border-neutral-300 dark:border-neutral-700 px-3 py-1.5 text-sm hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors"
+          className="text-micro rounded-chip border border-line text-ink-2 px-3 py-1.5 hover:bg-surface-2 transition-colors"
         >
           Import cards
         </button>
@@ -283,91 +314,101 @@ export function DeckDetail({ deckId }: Props) {
         />
       </div>
 
-      {/* Study / Test actions */}
-      <div className="flex gap-3">
+      {/* Add card */}
+      <div className="flex items-center justify-between">
+        <span className="text-micro text-ink-3 uppercase tracking-wide">
+          Cards
+        </span>
         <Link
-          href={`/decks/${deckId}/study`}
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors"
+          href={`/decks/${deckId}/cards/new`}
+          className="text-micro rounded-chip bg-accent-soft text-accent-hi px-3 py-1.5 hover:opacity-80 transition-opacity"
         >
-          Study ({dueCount} due)
-        </Link>
-        <Link
-          href={`/decks/${deckId}/test`}
-          className="rounded-lg border border-indigo-400 text-indigo-600 px-4 py-2 text-sm font-semibold hover:bg-indigo-50 dark:hover:bg-indigo-950 transition-colors"
-        >
-          Test mode
+          + Add card
         </Link>
       </div>
 
-      {/* Add card */}
-      <Link
-        href={`/decks/${deckId}/cards/new`}
-        className="inline-block rounded-lg border border-dashed border-neutral-400 px-4 py-2 text-sm text-neutral-500 hover:border-indigo-400 hover:text-indigo-600 transition-colors"
-      >
-        + Add card
-      </Link>
-
       {/* Card list */}
       {cardList.length === 0 ? (
-        <p className="text-neutral-500 text-sm">No cards yet.</p>
+        <p className="text-meta text-ink-3">No cards yet.</p>
       ) : (
-        <ul className="space-y-2">
-          {cardList.map((card) => (
-            <li
-              key={card.id}
-              className="rounded-lg border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 px-4 py-3 flex items-start justify-between gap-4"
-            >
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium truncate">{card.front}</p>
-                <p className="text-xs text-neutral-400 truncate mt-0.5">
-                  {card.back}
-                </p>
-                {(() => {
-                  const s = statsMap.get(card.id);
-                  if (!s || s.attempts === 0) return null;
-                  const pct = Math.round((s.correct / s.attempts) * 100);
-                  return (
-                    <p className="text-xs text-neutral-400 mt-0.5">
-                      {s.attempts} attempt{s.attempts !== 1 ? "s" : ""} · {pct}%
-                      correct
-                    </p>
-                  );
-                })()}
-                {(card.labels ?? []).length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-1">
-                    {(card.labels ?? []).map((l) => (
-                      <span
-                        key={l}
-                        className="rounded-full bg-indigo-100 dark:bg-indigo-900 text-indigo-700 dark:text-indigo-300 text-xs px-1.5 py-0.5"
-                      >
-                        {l}
-                      </span>
-                    ))}
+        <ul className="flex flex-col">
+          {cardList.map((card) => {
+            const s = statsMap.get(card.id);
+            const pct =
+              s && s.attempts > 0 ? Math.round((s.correct / s.attempts) * 100) : null;
+            const pctColor =
+              pct === null
+                ? "text-ink-3"
+                : pct >= 80
+                  ? "text-correct"
+                  : pct >= 60
+                    ? "text-self-grade"
+                    : "text-incorrect";
+            const barColor =
+              pct === null
+                ? "bg-line-2"
+                : pct >= 80
+                  ? "bg-correct"
+                  : pct >= 60
+                    ? "bg-self-grade"
+                    : "bg-incorrect";
+            return (
+              <li
+                key={card.id}
+                className="py-4 border-b border-line last:border-none flex items-start gap-4"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-body text-ink-1 truncate">{card.front}</p>
+                  {(card.labels ?? []).length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {(card.labels ?? []).map((l) => (
+                        <span
+                          key={l}
+                          className="text-micro rounded-chip bg-surface-3 border border-line text-ink-2 px-2.5 py-1"
+                        >
+                          {l}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="flex-none flex flex-col items-end gap-0.5">
+                  <span className={`text-stat ${pctColor}`}>
+                    {pct === null ? "—" : `${pct}%`}
+                  </span>
+                  <span className="text-stat text-ink-3">
+                    {s?.attempts ?? 0} tries
+                  </span>
+                  <div className="w-12 h-1 rounded-pill bg-surface-2 overflow-hidden mt-0.5">
+                    <div
+                      className={`h-full rounded-pill ${barColor}`}
+                      style={{ width: pct === null ? "0%" : `${pct}%` }}
+                    />
                   </div>
-                )}
-              </div>
-              <div className="flex gap-2 shrink-0">
-                <Link
-                  href={`/decks/${deckId}/cards/${card.id}/edit`}
-                  className="text-xs text-neutral-400 hover:text-indigo-600 transition-colors"
-                >
-                  Edit
-                </Link>
-                <button
-                  onClick={() => handleDeleteCard(card.id)}
-                  className="text-xs text-neutral-400 hover:text-red-500 transition-colors"
-                >
-                  Delete
-                </button>
-              </div>
-            </li>
-          ))}
+                  <div className="flex gap-2 mt-1">
+                    <Link
+                      href={`/decks/${deckId}/cards/${card.id}/edit`}
+                      className="text-micro text-ink-3 hover:text-accent-hi transition-colors"
+                    >
+                      Edit
+                    </Link>
+                    <button
+                      onClick={() => handleDeleteCard(card.id)}
+                      className="text-micro text-ink-3 hover:text-incorrect transition-colors"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </li>
+            );
+          })}
         </ul>
       )}
 
       <Link
         href="/"
-        className="inline-block text-sm text-neutral-400 hover:text-neutral-700 transition-colors"
+        className="inline-block text-meta text-ink-3 hover:text-ink-1 transition-colors"
       >
         ← All decks
       </Link>

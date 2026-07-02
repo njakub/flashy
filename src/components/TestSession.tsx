@@ -9,13 +9,13 @@ import {
 } from "react";
 import Link from "next/link";
 import { useRepositories } from "@/components/providers/RepositoryProvider";
+import { useAuth } from "@/components/providers/AuthProvider";
 import { scheduler } from "@/lib/scheduler";
 import {
   EmbeddingGrader,
   preloadEmbeddingModel,
 } from "@/lib/grading/EmbeddingGrader";
 import type { Card, GradeResult, TestRunQuestion } from "@/lib/types";
-import { LOCAL_USER_ID } from "@/lib/constants";
 
 /**
  * TestSession — free-text answer mode with local-embedding grading.
@@ -54,6 +54,7 @@ function sample<T>(arr: T[], n: number): T[] {
 
 export function TestSession({ deckId }: Props) {
   const { cards, testRuns } = useRepositories();
+  const { ownerId } = useAuth();
 
   // Phase 2 seam: swap grader implementation here.
   const grader = useRef(new EmbeddingGrader());
@@ -194,7 +195,7 @@ export function TestSession({ deckId }: Props) {
     try {
       await testRuns.saveRun(
         {
-          ownerId: LOCAL_USER_ID,
+          ownerId,
           deckId,
           startedAt: runStartedAt.current || completedAt,
           completedAt,
@@ -248,44 +249,59 @@ export function TestSession({ deckId }: Props) {
   }
 
   if (phase === "loading") {
-    return <div className="p-8 text-neutral-500">Loading…</div>;
+    return <div className="p-8 text-ink-3">Loading…</div>;
   }
 
+  const missed = reviewed - correct;
+
   return (
-    <div className="max-w-xl mx-auto py-10 px-4 space-y-6">
+    <div className="w-full max-w-xl mx-auto py-10 px-4 space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold">Test mode</h2>
+        <h2 className="text-title">Test mode</h2>
         {(phase === "question" ||
           phase === "grading" ||
           phase === "ambiguous" ||
           phase === "result") && (
-          <span className="text-sm text-neutral-400">
+          <span className="text-stat text-ink-2">
             {currentIndex + 1} / {queue.length}
           </span>
         )}
       </div>
+      {(phase === "question" ||
+        phase === "grading" ||
+        phase === "ambiguous" ||
+        phase === "result") && (
+        <div className="h-1 rounded-pill bg-surface-2 overflow-hidden -mt-2">
+          <div
+            className="h-full rounded-pill bg-accent transition-all"
+            style={{ width: `${(currentIndex / queue.length) * 100}%` }}
+          />
+        </div>
+      )}
 
       {/* Count-selection screen */}
       {phase === "pick" && (
-        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-8 space-y-6">
+        <div className="rounded-card border border-line bg-surface-1 p-8 space-y-6">
           {pool.length === 0 ? (
-            <p className="text-center text-neutral-500">
+            <p className="text-center text-meta text-ink-3">
               No cards in this deck yet.
             </p>
           ) : pool.length < 5 ? (
-            <p className="text-center text-neutral-500">
+            <p className="text-center text-meta text-ink-3">
               Only {pool.length} card{pool.length !== 1 ? "s" : ""} in this deck
               — need at least 5 for a quiz. Add more cards to get started.
             </p>
           ) : (
             <>
               <div className="space-y-1">
-                <p className="font-semibold text-center">How many questions?</p>
-                <p className="text-xs text-center text-neutral-400">
+                <p className="text-micro text-ink-3 uppercase tracking-wide text-center">
+                  How many questions?
+                </p>
+                <p className="text-meta text-center text-ink-3">
                   {pool.length} card{pool.length !== 1 ? "s" : ""} available
                 </p>
               </div>
-              <div className="grid grid-cols-4 gap-3">
+              <div className="flex bg-surface-2 border border-line rounded-control p-1 gap-1">
                 {QUIZ_SIZES.map((n) => {
                   const disabled = n > pool.length;
                   return (
@@ -293,11 +309,11 @@ export function TestSession({ deckId }: Props) {
                       key={n}
                       onClick={() => startTest(n)}
                       disabled={disabled}
-                      className={`rounded-lg border py-3 text-sm font-semibold transition-colors
+                      className={`flex-1 rounded-control py-3 text-button transition-colors
                         ${
                           disabled
-                            ? "border-neutral-200 dark:border-neutral-700 text-neutral-300 dark:text-neutral-600 cursor-not-allowed"
-                            : "border-indigo-300 dark:border-indigo-700 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950"
+                            ? "text-ink-3 cursor-not-allowed opacity-50"
+                            : "text-ink-2 hover:bg-surface-3"
                         }`}
                     >
                       {n}
@@ -310,7 +326,7 @@ export function TestSession({ deckId }: Props) {
           <div className="pt-2 text-center">
             <Link
               href={`/decks/${deckId}`}
-              className="text-sm text-neutral-400 hover:text-neutral-700 transition-colors"
+              className="text-meta text-ink-3 hover:text-ink-1 transition-colors"
             >
               ← Back to deck
             </Link>
@@ -320,28 +336,50 @@ export function TestSession({ deckId }: Props) {
 
       {/* Results screen */}
       {phase === "done" && (
-        <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-8 text-center space-y-4">
-          <p className="text-2xl">🎉</p>
-          <p className="font-semibold text-lg">
-            {correct} / {queue.length} correct
-          </p>
-          <p className="text-sm text-neutral-500">
-            {correct === queue.length
-              ? "Perfect score!"
-              : correct === 0
-                ? "Keep practising — you'll get there."
-                : "Good effort. Try again to improve your score."}
-          </p>
-          <div className="flex justify-center gap-3 pt-2">
+        <div className="space-y-6">
+          <div className="rounded-card border border-line bg-surface-1 p-8 text-center space-y-3">
+            <p className="text-big-score text-ink-1">
+              {correct}
+              <span className="text-ink-3">/{queue.length}</span>
+            </p>
+            <p className="text-meta text-ink-2">
+              {correct === queue.length
+                ? "Perfect score!"
+                : correct === 0
+                  ? "Keep practising — you'll get there."
+                  : "Good effort. Try again to improve your score."}
+            </p>
+            <div className="h-1.5 rounded-pill bg-surface-2 overflow-hidden mx-1">
+              <div
+                className="h-full rounded-pill bg-accent"
+                style={{
+                  width: `${queue.length > 0 ? (correct / queue.length) * 100 : 0}%`,
+                }}
+              />
+            </div>
+          </div>
+
+          <div className="flex gap-2.5">
+            <div className="flex-1 rounded-row border border-line bg-surface-1 p-4 text-center">
+              <p className="text-title text-correct">{correct}</p>
+              <p className="text-micro text-ink-3 mt-1">Correct</p>
+            </div>
+            <div className="flex-1 rounded-row border border-line bg-surface-1 p-4 text-center">
+              <p className="text-title text-incorrect">{missed}</p>
+              <p className="text-micro text-ink-3 mt-1">Missed</p>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2.5">
             <button
               onClick={() => setPhase("pick")}
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors"
+              className="text-button rounded-control bg-accent text-on-accent py-3 hover:opacity-90 transition-opacity"
             >
-              New test
+              Test again
             </button>
             <Link
               href={`/decks/${deckId}`}
-              className="rounded-lg border border-neutral-300 dark:border-neutral-700 px-4 py-2 text-sm transition-colors hover:bg-neutral-100 dark:hover:bg-neutral-800"
+              className="text-button rounded-control border border-line-2 text-ink-2 py-3 text-center hover:bg-surface-2 transition-colors"
             >
               Back to deck
             </Link>
@@ -352,52 +390,50 @@ export function TestSession({ deckId }: Props) {
       {/* Question + answer input */}
       {(phase === "question" || phase === "grading") && current && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 min-h-[120px] flex items-center justify-center text-center">
-            <p className="text-lg whitespace-pre-wrap">{current.front}</p>
+          <div className="rounded-card bg-surface-1 border border-line p-6 min-h-[120px] flex items-center">
+            <p className="text-card-front text-ink-1 whitespace-pre-wrap">
+              {current.front}
+            </p>
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-3">
-            <textarea
-              ref={answerRef}
-              value={userAnswer}
-              onChange={(e) => setUserAnswer(e.target.value)}
-              rows={3}
-              placeholder="Type your answer…"
-              disabled={phase === "grading"}
-              className="w-full rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none disabled:opacity-60"
-            />
-            <div className="flex gap-3 items-center">
+            <div className="flex gap-2">
+              <textarea
+                ref={answerRef}
+                value={userAnswer}
+                onChange={(e) => setUserAnswer(e.target.value)}
+                rows={2}
+                placeholder="Type your answer…"
+                disabled={phase === "grading"}
+                className="flex-1 rounded-control bg-surface-2 border border-line-2 px-4 py-3 text-base text-ink-1 placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-accent resize-none disabled:opacity-60"
+              />
               <button
                 type="submit"
                 disabled={phase === "grading" || !userAnswer.trim()}
-                className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+                className="text-button rounded-control bg-accent text-on-accent px-5 hover:opacity-90 disabled:opacity-50 transition-opacity"
               >
-                {phase === "grading"
-                  ? modelLoading
-                    ? "Loading model…"
-                    : "Grading…"
-                  : "Submit"}
-              </button>
-
-              {/*
-               * PHASE 2 PLACEHOLDER — AI grader button.
-               * Disabled / no-op in Phase 1. In Phase 2: construct an
-               * LlmGrader (implements Grader) and assign it to grader.current,
-               * then call handleSubmit programmatically.
-               */}
-              <button
-                type="button"
-                disabled
-                title="AI grading — coming in Phase 2"
-                className="rounded-lg border border-neutral-200 dark:border-neutral-700 px-4 py-2 text-sm text-neutral-400 opacity-40 cursor-not-allowed"
-              >
-                AI grade (Phase 2)
+                {phase === "grading" ? "…" : "→"}
               </button>
             </div>
+
+            {/*
+             * PHASE 2 PLACEHOLDER — AI grader button.
+             * Disabled / no-op in Phase 1. In Phase 2: construct an
+             * LlmGrader (implements Grader) and assign it to grader.current,
+             * then call handleSubmit programmatically.
+             */}
+            <button
+              type="button"
+              disabled
+              title="AI grading — coming in Phase 2"
+              className="text-meta rounded-control border border-line text-ink-3 px-4 py-2 opacity-50 cursor-not-allowed"
+            >
+              AI grade (Phase 2)
+            </button>
           </form>
 
           {phase === "grading" && modelLoading && (
-            <p className="text-xs text-neutral-400">
+            <p className="text-meta text-ink-3 text-center">
               Loading embedding model for the first time — this takes ~10 s and
               is cached for the rest of the session.
             </p>
@@ -408,64 +444,56 @@ export function TestSession({ deckId }: Props) {
       {/* Ambiguous band — self-grade */}
       {phase === "ambiguous" && current && (
         <div className="space-y-4">
-          <div className="rounded-xl border border-neutral-200 dark:border-neutral-800 bg-white dark:bg-neutral-900 p-6 space-y-3">
-            <p className="text-xs uppercase tracking-wide text-neutral-400 font-semibold">
-              Question
+          <div className="rounded-card bg-surface-1 border border-line p-6">
+            <p className="text-card-front text-ink-1 whitespace-pre-wrap">
+              {current.front}
             </p>
-            <p className="whitespace-pre-wrap">{current.front}</p>
           </div>
 
           {/* Show grader error if the embedding model failed to load */}
           {gradeError && (
-            <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950 px-4 py-3 space-y-1">
-              <p className="text-xs font-semibold text-red-700 dark:text-red-300">
+            <div className="rounded-control border border-incorrect-soft bg-incorrect-soft px-4 py-3 space-y-1">
+              <p className="text-micro text-incorrect font-semibold">
                 Embedding model error — please self-grade
               </p>
-              <p className="text-xs text-red-600 dark:text-red-400 font-mono break-all">
+              <p className="text-micro text-incorrect font-mono break-all">
                 {gradeError}
               </p>
             </div>
           )}
 
-          <div className="rounded-xl border border-yellow-200 dark:border-yellow-800 bg-yellow-50 dark:bg-yellow-950 p-6 space-y-4">
-            <p className="text-xs uppercase tracking-wide text-yellow-600 dark:text-yellow-400 font-semibold">
+          <div className="rounded-card border border-self-grade-soft bg-self-grade-soft p-6 space-y-4">
+            <p className="text-micro text-self-grade font-semibold">
               {gradeError
                 ? "Self-grade (model unavailable)"
-                : "Needs self-assessment"}
+                : "Your call"}
               {!gradeError && gradeResult?.similarity !== undefined && (
-                <span className="ml-2 font-normal">
+                <span className="ml-2 font-normal opacity-80">
                   (similarity: {(gradeResult.similarity * 100).toFixed(0)}%)
                 </span>
               )}
             </p>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <p className="text-xs font-semibold text-neutral-500">
-                  Your answer
-                </p>
-                <p className="text-sm whitespace-pre-wrap">{userAnswer}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs font-semibold text-neutral-500">
-                  Correct answer
-                </p>
-                <p className="text-sm whitespace-pre-wrap">{current.back}</p>
-              </div>
-            </div>
+            <p className="text-meta text-ink-2">
+              You wrote <b className="text-ink-1 font-semibold">{userAnswer}</b>
+            </p>
+            <p className="text-meta text-ink-2">
+              Accepted{" "}
+              <b className="text-ink-1 font-semibold">{current.back}</b>
+            </p>
 
-            <div className="flex gap-3">
-              <button
-                onClick={() => handleSelfGrade(true)}
-                className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-500 transition-colors"
-              >
-                I was correct
-              </button>
+            <div className="flex gap-2.5">
               <button
                 onClick={() => handleSelfGrade(false)}
-                className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-500 transition-colors"
+                className="flex-1 rounded-control border border-incorrect-soft bg-incorrect-soft text-incorrect py-3.5 text-button"
               >
-                I was wrong
+                Missed it
+              </button>
+              <button
+                onClick={() => handleSelfGrade(true)}
+                className="flex-1 rounded-control border border-correct-soft bg-correct-soft text-correct py-3.5 text-button"
+              >
+                Got it
               </button>
             </div>
 
@@ -477,9 +505,9 @@ export function TestSession({ deckId }: Props) {
                   setAddingAlternate(true);
                   setAlternateInput(userAnswer);
                 }}
-                className="text-xs text-neutral-400 hover:text-indigo-600 transition-colors underline"
+                className="w-full text-meta text-accent-hi border border-dashed border-line-2 rounded-control px-3 py-2.5 hover:bg-surface-2 transition-colors"
               >
-                My phrasing should also be accepted — add as alternate answer
+                Accept &ldquo;{userAnswer}&rdquo; for this card
               </button>
             ) : (
               <div className="flex gap-2 items-center">
@@ -488,13 +516,13 @@ export function TestSession({ deckId }: Props) {
                   value={alternateInput}
                   onChange={(e) => setAlternateInput(e.target.value)}
                   placeholder="Alternate accepted phrasing…"
-                  className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="flex-1 rounded-control bg-surface-1 border border-line-2 px-3 py-2 text-meta text-ink-1 focus:outline-none focus:ring-2 focus:ring-accent"
                 />
                 <button
                   type="button"
                   onClick={handleSaveAlternate}
                   disabled={!alternateInput.trim() || alternateSaving}
-                  className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+                  className="text-micro rounded-control bg-accent text-on-accent px-3 py-2 hover:opacity-90 disabled:opacity-50 transition-opacity"
                 >
                   {alternateSaving ? "Saving…" : "Save"}
                 </button>
@@ -504,7 +532,7 @@ export function TestSession({ deckId }: Props) {
                     setAddingAlternate(false);
                     setAlternateInput("");
                   }}
-                  className="text-xs text-neutral-400 hover:text-neutral-600 transition-colors"
+                  className="text-micro text-ink-3 hover:text-ink-1 transition-colors"
                 >
                   Cancel
                 </button>
@@ -517,56 +545,61 @@ export function TestSession({ deckId }: Props) {
       {/* Result reveal */}
       {phase === "result" && current && gradeResult && (
         <div className="space-y-4">
+          <div className="rounded-card bg-surface-1 border border-line p-6">
+            <p className="text-card-front text-ink-1 whitespace-pre-wrap">
+              {current.front}
+            </p>
+          </div>
+
           <div
-            className={`rounded-xl border p-6 space-y-3 ${
+            className={`rounded-card p-5 space-y-2.5 ${
               gradeResult.outcome === "correct"
-                ? "border-green-200 dark:border-green-800 bg-green-50 dark:bg-green-950"
-                : "border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950"
+                ? "bg-correct-soft"
+                : "bg-incorrect-soft"
             }`}
           >
             <p
-              className={`text-sm font-semibold ${
+              className={`flex items-center gap-2 text-button ${
                 gradeResult.outcome === "correct"
-                  ? "text-green-700 dark:text-green-300"
-                  : "text-red-700 dark:text-red-300"
+                  ? "text-correct"
+                  : "text-incorrect"
               }`}
             >
-              {gradeResult.outcome === "correct" ? "✓ Correct" : "✗ Incorrect"}
+              <span
+                className={`w-5 h-5 rounded-full flex items-center justify-center text-[13px] text-on-semantic ${
+                  gradeResult.outcome === "correct"
+                    ? "bg-correct"
+                    : "bg-incorrect"
+                }`}
+              >
+                {gradeResult.outcome === "correct" ? "✓" : "✕"}
+              </span>
+              {gradeResult.outcome === "correct" ? "Correct" : "Not quite"}
               {gradeResult.similarity !== undefined && (
-                <span className="ml-2 font-normal text-xs opacity-70">
+                <span className="font-normal text-micro opacity-70">
                   ({(gradeResult.similarity * 100).toFixed(0)}% similarity)
                 </span>
               )}
             </p>
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <p className="text-xs font-semibold text-neutral-500">
-                  Your answer
-                </p>
-                <p className="text-sm whitespace-pre-wrap">{userAnswer}</p>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs font-semibold text-neutral-500">
-                  Correct answer
-                </p>
-                <p className="text-sm whitespace-pre-wrap">{current.back}</p>
-              </div>
-            </div>
-          </div>
+            <p className="text-meta text-ink-2">
+              You wrote <b className="text-ink-1 font-semibold">{userAnswer}</b>
+            </p>
+            <p className="text-meta text-ink-2">
+              Answer <b className="text-ink-1 font-semibold">{current.back}</b>
+            </p>
 
-          {/* Add alternate answer — only shown on incorrect results */}
-          {gradeResult.outcome === "incorrect" && (
-            <div className="rounded-lg border border-neutral-200 dark:border-neutral-700 px-4 py-3">
-              {!addingAlternate ? (
+            {/* Add alternate answer — only shown on incorrect results */}
+            {gradeResult.outcome === "incorrect" &&
+              (!addingAlternate ? (
                 <button
                   type="button"
                   onClick={() => {
                     setAddingAlternate(true);
                     setAlternateInput(userAnswer);
                   }}
-                  className="text-xs text-neutral-400 hover:text-indigo-600 transition-colors underline"
+                  className="w-full text-meta text-accent-hi border border-dashed border-line-2 rounded-control px-3 py-2.5 hover:bg-surface-2 transition-colors"
                 >
-                  My phrasing should also be accepted — add as alternate answer
+                  Accept &ldquo;{userAnswer}&rdquo; for this card
                 </button>
               ) : (
                 <div className="flex gap-2 items-center">
@@ -575,13 +608,13 @@ export function TestSession({ deckId }: Props) {
                     value={alternateInput}
                     onChange={(e) => setAlternateInput(e.target.value)}
                     placeholder="Alternate accepted phrasing…"
-                    className="flex-1 rounded-lg border border-neutral-300 dark:border-neutral-700 bg-white dark:bg-neutral-900 px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                    className="flex-1 rounded-control bg-surface-1 border border-line-2 px-3 py-2 text-meta text-ink-1 focus:outline-none focus:ring-2 focus:ring-accent"
                   />
                   <button
                     type="button"
                     onClick={handleSaveAlternate}
                     disabled={!alternateInput.trim() || alternateSaving}
-                    className="rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors"
+                    className="text-micro rounded-control bg-accent text-on-accent px-3 py-2 hover:opacity-90 disabled:opacity-50 transition-opacity"
                   >
                     {alternateSaving ? "Saving…" : "Save"}
                   </button>
@@ -591,18 +624,17 @@ export function TestSession({ deckId }: Props) {
                       setAddingAlternate(false);
                       setAlternateInput("");
                     }}
-                    className="text-xs text-neutral-400 hover:text-neutral-600 transition-colors"
+                    className="text-micro text-ink-3 hover:text-ink-1 transition-colors"
                   >
                     Cancel
                   </button>
                 </div>
-              )}
-            </div>
-          )}
+              ))}
+          </div>
 
           <button
             onClick={advance}
-            className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-semibold text-white hover:bg-indigo-500 transition-colors"
+            className="w-full text-button rounded-control bg-accent text-on-accent py-3.5 hover:opacity-90 transition-opacity"
           >
             Next →
           </button>
@@ -611,7 +643,7 @@ export function TestSession({ deckId }: Props) {
 
       <Link
         href={`/decks/${deckId}`}
-        className="inline-block text-sm text-neutral-400 hover:text-neutral-700 transition-colors"
+        className="inline-block text-meta text-ink-3 hover:text-ink-1 transition-colors"
       >
         ← Back to deck
       </Link>

@@ -20,6 +20,13 @@ export interface SchedulingState {
   reps: number;
   /** Number of times the card was answered "Again" (lapse). */
   lapses: number;
+  /**
+   * ISO timestamp of the most recent review, or null if never reviewed.
+   * Sync reconciles scheduling independently from card content, keyed on
+   * this field — advance-only, most-recent-review-wins — so a content edit
+   * on one device can never clobber a review recorded on another.
+   */
+  lastReviewedAt: string | null;
 }
 
 // ---------------------------------------------------------------------------
