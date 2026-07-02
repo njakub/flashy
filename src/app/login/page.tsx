@@ -2,10 +2,12 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { GoogleOAuthProvider, GoogleLogin } from "@react-oauth/google";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { GOOGLE_CLIENT_ID } from "@/lib/config";
 
-export default function LoginPage() {
-  const { login, register } = useAuth();
+function LoginForm() {
+  const { login, register, loginWithGoogle } = useAuth();
   const router = useRouter();
   const [mode, setMode] = useState<"login" | "register">("login");
   const [email, setEmail] = useState("");
@@ -31,6 +33,20 @@ export default function LoginPage() {
     }
   }
 
+  async function handleGoogleSuccess(idToken: string | undefined) {
+    if (!idToken) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await loginWithGoogle(idToken);
+      router.push("/");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Google sign-in failed.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
   return (
     <div className="w-full max-w-sm mx-auto py-16 px-4">
       <h1 className="text-display tracking-tight mb-1">
@@ -41,6 +57,21 @@ export default function LoginPage() {
           ? "Sync your decks across devices."
           : "Your existing local decks will move with you."}
       </p>
+
+      {GOOGLE_CLIENT_ID && (
+        <div className="mb-4">
+          <GoogleLogin
+            onSuccess={(cred) => void handleGoogleSuccess(cred.credential)}
+            onError={() => setError("Google sign-in failed.")}
+            width="100%"
+          />
+          <div className="flex items-center gap-3 my-4">
+            <div className="h-px flex-1 bg-line-2" />
+            <span className="text-meta text-ink-3">or</span>
+            <div className="h-px flex-1 bg-line-2" />
+          </div>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} className="flex flex-col gap-3">
         <input
@@ -82,5 +113,17 @@ export default function LoginPage() {
           : "Already have an account? Sign in"}
       </button>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  // Google's script/provider is only needed here, not app-wide. If the
+  // client id isn't configured (local dev without it, or not set up yet),
+  // fall back to plain email/password — no Google button, no crash.
+  if (!GOOGLE_CLIENT_ID) return <LoginForm />;
+  return (
+    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+      <LoginForm />
+    </GoogleOAuthProvider>
   );
 }

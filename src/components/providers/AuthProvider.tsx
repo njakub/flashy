@@ -35,10 +35,15 @@ interface AuthContextValue {
   ownerId: string;
   login(email: string, password: string): Promise<void>;
   register(email: string, password: string): Promise<void>;
+  loginWithGoogle(idToken: string): Promise<void>;
   logout(): Promise<void>;
   lastSyncAt: string | null;
   syncError: string | null;
   syncing: boolean;
+  /** Resolves the current access token, refreshing it first if needed.
+   *  Returns null if there's no signed-in session. Used by LlmGrader to
+   *  call the guarded POST /grade endpoint, same pattern as SyncEngine. */
+  getAccessToken(): Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -197,6 +202,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [applySession],
   );
 
+  const loginWithGoogle = useCallback(
+    async (idToken: string) => {
+      const tokens = await AuthClient.google(idToken);
+      applySession(tokens);
+      await bootstrapLocalUserData(tokens.user.id);
+    },
+    [applySession],
+  );
+
   const logout = useCallback(async () => {
     const session = sessionRef.current;
     if (session) {
@@ -211,10 +225,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     ownerId: user?.id ?? LOCAL_USER_ID,
     login,
     register,
+    loginWithGoogle,
     logout,
     lastSyncAt,
     syncError,
     syncing,
+    getAccessToken,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

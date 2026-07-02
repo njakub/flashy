@@ -15,16 +15,17 @@ import {
   EmbeddingGrader,
   preloadEmbeddingModel,
 } from "@/lib/grading/EmbeddingGrader";
+import { LlmGrader } from "@/lib/grading/LlmGrader";
+import type { Grader } from "@/lib/grading/Grader";
 import type { Card, GradeResult, TestRunQuestion } from "@/lib/types";
 
 /**
- * TestSession — free-text answer mode with local-embedding grading.
- *
- * Phase 2 seam: the `grader` ref holds a `Grader` instance.
- * To plug in an LLM grader, construct a different Grader implementation and
- * assign it. The UI code below only calls `grader.current.grade(...)`.
- *
- * A placeholder for a future "AI grade" button is included but disabled/no-op.
+ * TestSession — free-text answer mode, gradeable two ways: the local
+ * on-device embedding grader (free, works offline) or the AI grader (taps
+ * flashy-api's POST /grade, which proxies to Claude — requires sign-in,
+ * only fires when the user taps a button). Both implement the same `Grader`
+ * interface, so submitAnswer() and the downstream outcome/history flow don't
+ * care which one produced a result.
  */
 
 interface Props {
@@ -54,10 +55,11 @@ function sample<T>(arr: T[], n: number): T[] {
 
 export function TestSession({ deckId }: Props) {
   const { cards, testRuns } = useRepositories();
-  const { ownerId } = useAuth();
+  const { ownerId, status, getAccessToken } = useAuth();
+  const isSignedIn = status === "signedIn";
 
-  // Phase 2 seam: swap grader implementation here.
-  const grader = useRef(new EmbeddingGrader());
+  const embeddingGrader = useRef(new EmbeddingGrader());
+  const llmGrader = useRef(new LlmGrader(getAccessToken));
 
   const [pool, setPool] = useState<Card[]>([]); // full deck card pool
   const [queue, setQueue] = useState<Card[]>([]); // current run's random subset
@@ -65,7 +67,11 @@ export function TestSession({ deckId }: Props) {
   const [phase, setPhase] = useState<SessionPhase>("loading");
   const [userAnswer, setUserAnswer] = useState("");
   const [gradeResult, setGradeResult] = useState<GradeResult | null>(null);
-  const [modelLoading, setModelLoading] = useState(false);
+  // Which grader produced the in-flight "grading" phase, if any — drives the
+  // loading copy and which button shows a spinner state.
+  const [activeGrader, setActiveGrader] = useState<"local" | "ai" | null>(
+    null,
+  );
   const [gradeError, setGradeError] = useState<string | null>(null);
   const [reviewed, setReviewed] = useState(0);
   const [correct, setCorrect] = useState(0);
@@ -124,15 +130,21 @@ export function TestSession({ deckId }: Props) {
     return [card.back, ...(card.alternateAnswers ?? [])];
   }
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
+  /**
+   * Grades the current typed answer with whichever Grader is passed in.
+   * Shared by the local Grade submit, the top-level AI Grade button, and the
+   * AI-grade tiebreaker in the ambiguous band — all downstream routing
+   * (correct/incorrect -> persist, ambiguous -> self-grade, error -> self-
+   * grade fallback) is identical regardless of which grader produced it.
+   */
+  async function submitAnswer(grader: Grader, source: "local" | "ai") {
     const answer = userAnswer.trim();
     if (!answer || !current) return;
     setPhase("grading");
     setGradeError(null);
-    setModelLoading(true);
+    setActiveGrader(source);
     try {
-      const result = await grader.current.grade(
+      const result = await grader.grade(
         current.front,
         acceptedAnswers(current),
         answer,
@@ -146,16 +158,24 @@ export function TestSession({ deckId }: Props) {
       }
     } catch (err) {
       // Log full stack so the trace is visible in Firefox DevTools console.
-      // Check the Console tab (F12) for "EmbeddingGrader error:" immediately
-      // after hitting Submit — the stack will show the exact throw site.
-      console.error("EmbeddingGrader error:", err);
+      // Check the Console tab (F12) for the "... error:" line immediately
+      // after grading — the stack will show the exact throw site.
+      console.error(
+        `${source === "ai" ? "LlmGrader" : "EmbeddingGrader"} error:`,
+        err,
+      );
       const message = err instanceof Error ? err.message : String(err);
       setGradeError(message);
       setGradeResult({ outcome: "ambiguous" });
       setPhase("ambiguous");
     } finally {
-      setModelLoading(false);
+      setActiveGrader(null);
     }
+  }
+
+  function handleFormSubmit(e: FormEvent) {
+    e.preventDefault();
+    void submitAnswer(embeddingGrader.current, "local");
   }
 
   async function persistGrade(isCorrect: boolean, similarity?: number) {
@@ -396,7 +416,7 @@ export function TestSession({ deckId }: Props) {
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-3">
+          <form onSubmit={handleFormSubmit} className="space-y-3">
             <div className="flex gap-2">
               <textarea
                 ref={answerRef}
@@ -412,30 +432,36 @@ export function TestSession({ deckId }: Props) {
                 disabled={phase === "grading" || !userAnswer.trim()}
                 className="text-button rounded-control bg-accent text-on-accent px-5 hover:opacity-90 disabled:opacity-50 transition-opacity"
               >
-                {phase === "grading" ? "…" : "→"}
+                {activeGrader === "local" ? "…" : "→"}
               </button>
             </div>
 
-            {/*
-             * PHASE 2 PLACEHOLDER — AI grader button.
-             * Disabled / no-op in Phase 1. In Phase 2: construct an
-             * LlmGrader (implements Grader) and assign it to grader.current,
-             * then call handleSubmit programmatically.
-             */}
+            {/* AI Grade — sends this answer to Claude via flashy-api's
+             * POST /grade. Only fires on tap; requires sign-in since the
+             * endpoint is JWT-guarded (the LLM API key never reaches the
+             * client). Local Grade above is unchanged and works signed out. */}
             <button
               type="button"
-              disabled
-              title="AI grading — coming in Phase 2"
-              className="text-meta rounded-control border border-line text-ink-3 px-4 py-2 opacity-50 cursor-not-allowed"
+              onClick={() => void submitAnswer(llmGrader.current, "ai")}
+              disabled={
+                phase === "grading" || !userAnswer.trim() || !isSignedIn
+              }
+              title={isSignedIn ? undefined : "Sign in to use AI grade"}
+              className="text-meta rounded-control border border-line text-ink-2 px-4 py-2 hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-colors"
             >
-              AI grade (Phase 2)
+              {activeGrader === "ai" ? "Asking Claude…" : "AI grade"}
             </button>
           </form>
 
-          {phase === "grading" && modelLoading && (
+          {phase === "grading" && activeGrader === "local" && (
             <p className="text-meta text-ink-3 text-center">
               Loading embedding model for the first time — this takes ~10 s and
               is cached for the rest of the session.
+            </p>
+          )}
+          {phase === "grading" && activeGrader === "ai" && (
+            <p className="text-meta text-ink-3 text-center">
+              Asking Claude to grade this answer…
             </p>
           )}
         </div>
@@ -450,11 +476,11 @@ export function TestSession({ deckId }: Props) {
             </p>
           </div>
 
-          {/* Show grader error if the embedding model failed to load */}
+          {/* Show grader error if grading failed (either grader) */}
           {gradeError && (
             <div className="rounded-control border border-incorrect-soft bg-incorrect-soft px-4 py-3 space-y-1">
               <p className="text-micro text-incorrect font-semibold">
-                Embedding model error — please self-grade
+                Grading error — please self-grade
               </p>
               <p className="text-micro text-incorrect font-mono break-all">
                 {gradeError}
@@ -496,6 +522,20 @@ export function TestSession({ deckId }: Props) {
                 Got it
               </button>
             </div>
+
+            {/* Let Claude break the tie instead of self-grading. This block
+             * only renders while phase === "ambiguous" — submitAnswer moves
+             * phase to "grading" synchronously, unmounting it, so there's no
+             * separate disabled state to track here. */}
+            {isSignedIn && (
+              <button
+                type="button"
+                onClick={() => void submitAnswer(llmGrader.current, "ai")}
+                className="w-full text-meta text-accent-hi border border-dashed border-line-2 rounded-control px-3 py-2.5 hover:bg-surface-2 transition-colors"
+              >
+                Let AI grade this instead
+              </button>
+            )}
 
             {/* Add alternate answer affordance — optional, never blocking */}
             {!addingAlternate ? (
@@ -587,6 +627,11 @@ export function TestSession({ deckId }: Props) {
             <p className="text-meta text-ink-2">
               Answer <b className="text-ink-1 font-semibold">{current.back}</b>
             </p>
+            {gradeResult.rationale && (
+              <p className="text-micro text-ink-3 italic">
+                “{gradeResult.rationale}”
+              </p>
+            )}
 
             {/* Add alternate answer — only shown on incorrect results */}
             {gradeResult.outcome === "incorrect" &&

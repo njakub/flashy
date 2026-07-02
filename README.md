@@ -35,6 +35,23 @@ Then sign in (or register) at `/login`. Any decks/cards created before signing i
 
 ---
 
+## Deployment
+
+The frontend deploys to **Vercel**; the backend (`../flashy-api`) deploys to **Fly.io** with **Neon** Postgres (see that project's README for the backend steps).
+
+**Vercel needs exactly one environment variable:**
+
+| Variable | Value |
+|---|---|
+| `NEXT_PUBLIC_API_URL` | The deployed `flashy-api` URL, e.g. `https://flashy-api.fly.dev` |
+
+That's the whole frontend config — no secrets live here. `DATABASE_URL` and the JWT secrets belong only to the backend. Two gotchas:
+
+- `NEXT_PUBLIC_` vars are inlined at **build** time, so after setting or changing it you must **redeploy**.
+- The backend's `CORS_ORIGIN` must list your Vercel production origin (e.g. `https://flashy.vercel.app`), or the browser's sync requests are blocked. Preview deployments use random `*.vercel.app` URLs that won't match unless added.
+
+---
+
 ## Architecture seams
 
 ### 1. Storage port (`src/lib/repositories/`)

@@ -131,4 +131,7 @@ export interface GradeResult {
   outcome: GradeOutcome;
   /** Similarity score in [0,1] when available (embedding grader). */
   similarity?: number;
+  /** Short justification when available (LLM grader). Transient — shown in the
+   * result UI for the current attempt only, never persisted to TestRunQuestion. */
+  rationale?: string;
 }

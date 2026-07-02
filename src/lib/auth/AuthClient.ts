@@ -39,6 +39,9 @@ export const AuthClient = {
   login(email: string, password: string): Promise<AuthTokens> {
     return postJson<AuthTokens>("/auth/login", { email, password });
   },
+  google(idToken: string): Promise<AuthTokens> {
+    return postJson<AuthTokens>("/auth/google", { idToken });
+  },
   refresh(refreshToken: string): Promise<AuthTokens> {
     return postJson<AuthTokens>("/auth/refresh", { refreshToken });
   },
