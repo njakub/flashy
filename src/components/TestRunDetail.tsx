@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRepositories } from "@/components/providers/RepositoryProvider";
 import { useReloadOnSync } from "@/lib/sync/useReloadOnSync";
 import { cardLabelsById, formatDuration } from "@/lib/testHistory";
+import { CardContent } from "@/components/CardContent";
 import type { Card, TestRun, TestRunQuestion } from "@/lib/types";
 
 interface Props {
@@ -89,7 +90,7 @@ export function TestRunDetail({ deckId, runId }: Props) {
                 {q.outcome === "correct" ? "✓" : "✕"}
               </span>
               <div className="flex-1 min-w-0">
-                <p className="text-body text-ink-1">{q.cardFrontSnapshot}</p>
+                <CardContent text={q.cardFrontSnapshot} className="text-body text-ink-1" />
                 <p className="text-meta text-ink-3 mt-1">
                   {q.outcome === "correct" ? (
                     q.cardBackSnapshot

@@ -3,6 +3,7 @@ import { Hanken_Grotesk, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { RepositoryProvider } from "@/components/providers/RepositoryProvider";
 import { AuthProvider } from "@/components/providers/AuthProvider";
+import { SettingsProvider } from "@/components/providers/SettingsProvider";
 import { AuthBar } from "@/components/AuthBar";
 
 const hankenGrotesk = Hanken_Grotesk({
@@ -34,10 +35,12 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-surface-0 text-ink-1 font-sans">
         <AuthProvider>
-          <RepositoryProvider>
-            <AuthBar />
-            {children}
-          </RepositoryProvider>
+          <SettingsProvider>
+            <RepositoryProvider>
+              <AuthBar />
+              {children}
+            </RepositoryProvider>
+          </SettingsProvider>
         </AuthProvider>
       </body>
     </html>

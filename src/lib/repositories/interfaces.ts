@@ -42,7 +42,12 @@ export interface CardRepository {
     patch: Partial<
       Pick<
         Card,
-        "front" | "back" | "alternateAnswers" | "labels" | "scheduling"
+        | "front"
+        | "back"
+        | "alternateAnswers"
+        | "answerJustifications"
+        | "labels"
+        | "scheduling"
       >
     >,
   ): Promise<Card>;

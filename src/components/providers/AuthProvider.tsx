@@ -125,23 +125,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // synchronous render — so the lazy-init check below is safe.
   const syncEngineRef = useRef<SyncEngine | null>(null);
 
-  const runSync = useCallback(async () => {
-    if (!sessionRef.current) return;
+  // The 45s interval, the post-write debounce, and sign-in/wake-up triggers
+  // can all fire close together; without this guard two syncOnce() calls
+  // could run concurrently and apply their pulls out of order, interleaving
+  // db.syncState cursor writes (a stale cursor could re-pull or skip a
+  // revision window). Every trigger below awaits this single in-flight
+  // promise instead of starting a second round trip.
+  const inFlightRef = useRef<Promise<void> | null>(null);
+
+  const runSync = useCallback((): Promise<void> => {
+    if (inFlightRef.current) return inFlightRef.current;
+    if (!sessionRef.current) return Promise.resolve();
     if (!syncEngineRef.current) {
       syncEngineRef.current = new SyncEngine(getAccessToken);
     }
     setSyncing(true);
-    try {
-      const result: SyncResult | null = await syncEngineRef.current.syncOnce();
-      if (result) {
-        setLastSyncAt(new Date().toISOString());
-        setSyncError(null);
-      }
-    } catch (err) {
-      setSyncError(err instanceof Error ? err.message : "Sync failed");
-    } finally {
-      setSyncing(false);
-    }
+    const promise = syncEngineRef.current
+      .syncOnce()
+      .then((result: SyncResult | null) => {
+        if (result) {
+          setLastSyncAt(new Date().toISOString());
+          setSyncError(null);
+        }
+      })
+      .catch((err: unknown) => {
+        setSyncError(err instanceof Error ? err.message : "Sync failed");
+      })
+      .finally(() => {
+        setSyncing(false);
+        inFlightRef.current = null;
+      });
+    inFlightRef.current = promise;
+    return promise;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -161,11 +176,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // Sync on sign-in / app open, then periodically while signed in. The
   // initial call is deferred to a microtask so runSync's own setState
   // doesn't execute synchronously inside this effect's call stack.
+  //
+  // Also resync on `online` (network just came back) and `visibilitychange`
+  // (tab/laptop just woke up) rather than waiting up to SYNC_INTERVAL_MS —
+  // both are common "device just resumed, UI should converge fast" moments.
   useEffect(() => {
     if (status !== "signedIn") return;
     void Promise.resolve().then(() => runSync());
     const interval = setInterval(() => void runSync(), SYNC_INTERVAL_MS);
-    return () => clearInterval(interval);
+    const onOnline = () => void runSync();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void runSync();
+    };
+    window.addEventListener("online", onOnline);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("online", onOnline);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
   }, [status, runSync]);
 
   // Sync shortly after any local write, debounced — so "Synced" in the

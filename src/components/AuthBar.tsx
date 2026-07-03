@@ -23,6 +23,9 @@ export function AuthBar() {
                 ? `Sync error: ${syncError}`
                 : "Synced"}
           </span>
+          <Link href="/profile" className="text-accent-hi hover:underline">
+            Profile
+          </Link>
           <span className="text-ink-3">{user?.email}</span>
           <button
             type="button"

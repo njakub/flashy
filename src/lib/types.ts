@@ -58,6 +58,14 @@ export interface Card {
    * OR any alternateAnswer.
    */
   alternateAnswers: string[];
+  /**
+   * AI-authored justification for an accepted answer, keyed by the exact
+   * answer text (a key into `back` or `alternateAnswers`). Populated when the
+   * AI grading cascade auto-accepts a typed answer; shown on future correct
+   * matches instead of a generic success message. Optional/additive — cards
+   * synced before this existed simply have no entries.
+   */
+  answerJustifications?: Record<string, string>;
   /** User-defined tags.  Stored as a string array; maps to text[] in Postgres. */
   labels: string[];
   createdAt: string;
@@ -134,4 +142,8 @@ export interface GradeResult {
   /** Short justification when available (LLM grader). Transient — shown in the
    * result UI for the current attempt only, never persisted to TestRunQuestion. */
   rationale?: string;
+  /** Which accepted answer produced the best/matching similarity (embedding
+   * grader) — used to look up that answer's stored justification, if any.
+   * Transient, same lifetime as rationale/similarity. */
+  matchedAnswer?: string;
 }

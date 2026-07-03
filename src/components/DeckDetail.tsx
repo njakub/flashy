@@ -12,6 +12,8 @@ import {
   parseImportFile,
   sanitizeFilename,
 } from "@/lib/importExport";
+import { FLAGGED_LABEL } from "@/lib/constants";
+import { previewText } from "@/lib/content/markdown";
 import type { Deck, Card, CardStats } from "@/lib/types";
 
 interface Props {
@@ -31,6 +33,7 @@ export function DeckDetail({ deckId }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [importSummary, setImportSummary] = useState<string | null>(null);
+  const [showFlaggedOnly, setShowFlaggedOnly] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
@@ -179,6 +182,12 @@ export function DeckDetail({ deckId }: Props) {
   );
   const avgAccuracy =
     totals.attempts > 0 ? Math.round((totals.correct / totals.attempts) * 100) : null;
+  const flaggedCount = cardList.filter((c) =>
+    c.labels.includes(FLAGGED_LABEL),
+  ).length;
+  const visibleCards = showFlaggedOnly
+    ? cardList.filter((c) => c.labels.includes(FLAGGED_LABEL))
+    : cardList;
 
   return (
     <div className="w-full max-w-2xl mx-auto py-10 px-4 space-y-6">
@@ -315,10 +324,24 @@ export function DeckDetail({ deckId }: Props) {
       </div>
 
       {/* Add card */}
-      <div className="flex items-center justify-between">
-        <span className="text-micro text-ink-3 uppercase tracking-wide">
-          Cards
-        </span>
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-micro text-ink-3 uppercase tracking-wide">
+            Cards
+          </span>
+          {flaggedCount > 0 && (
+            <button
+              onClick={() => setShowFlaggedOnly((v) => !v)}
+              className={`text-micro rounded-chip border px-2.5 py-1 transition-colors ${
+                showFlaggedOnly
+                  ? "bg-incorrect text-on-semantic border-incorrect"
+                  : "bg-surface-2 border-line-2 text-ink-2 hover:bg-surface-3"
+              }`}
+            >
+              ⚑ {flaggedCount} flagged
+            </button>
+          )}
+        </div>
         <Link
           href={`/decks/${deckId}/cards/new`}
           className="text-micro rounded-chip bg-accent-soft text-accent-hi px-3 py-1.5 hover:opacity-80 transition-opacity"
@@ -328,11 +351,15 @@ export function DeckDetail({ deckId }: Props) {
       </div>
 
       {/* Card list */}
-      {cardList.length === 0 ? (
-        <p className="text-meta text-ink-3">No cards yet.</p>
+      {visibleCards.length === 0 ? (
+        <p className="text-meta text-ink-3">
+          {cardList.length === 0
+            ? "No cards yet."
+            : "No flagged cards."}
+        </p>
       ) : (
         <ul className="flex flex-col">
-          {cardList.map((card) => {
+          {visibleCards.map((card) => {
             const s = statsMap.get(card.id);
             const pct =
               s && s.attempts > 0 ? Math.round((s.correct / s.attempts) * 100) : null;
@@ -358,15 +385,21 @@ export function DeckDetail({ deckId }: Props) {
                 className="py-4 border-b border-line last:border-none flex items-start gap-4"
               >
                 <div className="flex-1 min-w-0">
-                  <p className="text-body text-ink-1 truncate">{card.front}</p>
+                  <p className="text-body text-ink-1 truncate">
+                    {previewText(card.front)}
+                  </p>
                   {(card.labels ?? []).length > 0 && (
                     <div className="flex flex-wrap gap-1.5 mt-2">
                       {(card.labels ?? []).map((l) => (
                         <span
                           key={l}
-                          className="text-micro rounded-chip bg-surface-3 border border-line text-ink-2 px-2.5 py-1"
+                          className={
+                            l === FLAGGED_LABEL
+                              ? "text-micro rounded-chip bg-incorrect-soft border border-incorrect-soft text-incorrect px-2.5 py-1"
+                              : "text-micro rounded-chip bg-surface-3 border border-line text-ink-2 px-2.5 py-1"
+                          }
                         >
-                          {l}
+                          {l === FLAGGED_LABEL ? `⚑ ${l}` : l}
                         </span>
                       ))}
                     </div>

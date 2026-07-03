@@ -1,15 +1,54 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useRepositories } from "@/components/providers/RepositoryProvider";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { DEFAULT_SCHEDULING_STATE } from "@/lib/scheduler";
+import { CardContent } from "@/components/CardContent";
 import type { Card } from "@/lib/types";
 
 interface Props {
   deckId: string;
   cardId?: string; // undefined = create mode
+}
+
+type FieldMode = "write" | "preview";
+
+const CODE_LANGUAGES = [
+  "js",
+  "ts",
+  "python",
+  "java",
+  "c",
+  "cpp",
+  "csharp",
+  "go",
+  "rust",
+  "ruby",
+  "php",
+  "sql",
+  "bash",
+  "html",
+  "css",
+  "json",
+] as const;
+
+/** Wraps the textarea's current selection (or the whole value) in a fenced
+ * code block, defaulting the selection to a "code" placeholder when empty. */
+function wrapSelectionInFence(
+  el: HTMLTextAreaElement,
+  value: string,
+  lang: string,
+): string {
+  const start = el.selectionStart ?? value.length;
+  const end = el.selectionEnd ?? value.length;
+  const selected = value.slice(start, end) || "code";
+  const before = value.slice(0, start);
+  const after = value.slice(end);
+  const leadingNewline = before.length > 0 && !before.endsWith("\n") ? "\n" : "";
+  const trailingNewline = after.length > 0 && !after.startsWith("\n") ? "\n" : "";
+  return `${before}${leadingNewline}\`\`\`${lang}\n${selected}\n\`\`\`${trailingNewline}${after}`;
 }
 
 export function CardForm({ deckId, cardId }: Props) {
@@ -24,6 +63,11 @@ export function CardForm({ deckId, cardId }: Props) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [existing, setExisting] = useState<Card | null>(null);
+  const [frontMode, setFrontMode] = useState<FieldMode>("write");
+  const [backMode, setBackMode] = useState<FieldMode>("write");
+  const [insertLang, setInsertLang] = useState<string>(CODE_LANGUAGES[0]);
+  const frontRef = useRef<HTMLTextAreaElement>(null);
+  const backRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (!cardId) return;
@@ -105,28 +149,28 @@ export function CardForm({ deckId, cardId }: Props) {
       </h1>
 
       <form onSubmit={handleSubmit} className="space-y-5">
-        <div className="space-y-1.5">
-          <label className="block text-micro text-ink-2">Front</label>
-          <textarea
-            value={front}
-            onChange={(e) => setFront(e.target.value)}
-            rows={3}
-            placeholder="Question or prompt…"
-            className="w-full rounded-control bg-surface-2 border border-line-2 px-4 py-3 text-base text-ink-1 placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-accent resize-none"
-          />
-        </div>
-        <div className="space-y-1.5">
-          <label className="block text-micro text-ink-2">
-            Back (primary answer)
-          </label>
-          <textarea
-            value={back}
-            onChange={(e) => setBack(e.target.value)}
-            rows={3}
-            placeholder="Answer…"
-            className="w-full rounded-control bg-surface-2 border border-line-2 px-4 py-3 text-base text-ink-1 placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-accent resize-none"
-          />
-        </div>
+        <FieldEditor
+          label="Front"
+          value={front}
+          onChange={setFront}
+          mode={frontMode}
+          setMode={setFrontMode}
+          textareaRef={frontRef}
+          placeholder="Question or prompt…"
+          insertLang={insertLang}
+          setInsertLang={setInsertLang}
+        />
+        <FieldEditor
+          label="Back (primary answer)"
+          value={back}
+          onChange={setBack}
+          mode={backMode}
+          setMode={setBackMode}
+          textareaRef={backRef}
+          placeholder="Answer…"
+          insertLang={insertLang}
+          setInsertLang={setInsertLang}
+        />
 
         {/* Alternate accepted answers */}
         <div className="space-y-2">
@@ -216,6 +260,102 @@ export function CardForm({ deckId, cardId }: Props) {
           </button>
         </div>
       </form>
+    </div>
+  );
+}
+
+interface FieldEditorProps {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  mode: FieldMode;
+  setMode: (mode: FieldMode) => void;
+  textareaRef: React.RefObject<HTMLTextAreaElement | null>;
+  placeholder: string;
+  insertLang: string;
+  setInsertLang: (lang: string) => void;
+}
+
+/** Write/Preview toggle over a textarea, with an "Insert code block" affordance
+ * that wraps the current selection in fences — the plain textarea stays the
+ * source of truth throughout (see docs/feature-analysis-report.md §B3). */
+function FieldEditor({
+  label,
+  value,
+  onChange,
+  mode,
+  setMode,
+  textareaRef,
+  placeholder,
+  insertLang,
+  setInsertLang,
+}: FieldEditorProps) {
+  function handleInsertCodeBlock() {
+    const el = textareaRef.current;
+    if (!el) return;
+    onChange(wrapSelectionInFence(el, value, insertLang));
+    requestAnimationFrame(() => el.focus());
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center justify-between flex-wrap gap-y-1.5">
+        <label className="block text-micro text-ink-2">{label}</label>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
+          <select
+            value={insertLang}
+            onChange={(e) => setInsertLang(e.target.value)}
+            disabled={mode === "preview"}
+            className="text-micro rounded-control bg-surface-2 border border-line-2 px-2 py-1 text-ink-2 disabled:opacity-40"
+          >
+            {CODE_LANGUAGES.map((l) => (
+              <option key={l} value={l}>
+                {l}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={handleInsertCodeBlock}
+            disabled={mode === "preview"}
+            className="text-micro text-accent-hi hover:opacity-80 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity whitespace-nowrap"
+          >
+            + Code block
+          </button>
+          <div className="flex bg-surface-2 border border-line rounded-control p-0.5 gap-0.5">
+            {(["write", "preview"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                className={`px-2.5 py-1 rounded-segment text-micro capitalize transition-colors ${
+                  mode === m ? "bg-surface-3 text-ink-1" : "text-ink-3"
+                }`}
+              >
+                {m}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+      {mode === "write" ? (
+        <textarea
+          ref={textareaRef}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          rows={4}
+          placeholder={placeholder}
+          className="w-full rounded-control bg-surface-2 border border-line-2 px-4 py-3 text-base text-ink-1 placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-accent resize-none"
+        />
+      ) : (
+        <div className="w-full rounded-control bg-surface-2 border border-line-2 px-4 py-3 min-h-[6.5rem]">
+          {value.trim() === "" ? (
+            <p className="text-base text-ink-3">Nothing to preview yet.</p>
+          ) : (
+            <CardContent text={value} className="text-base text-ink-1" />
+          )}
+        </div>
+      )}
     </div>
   );
 }

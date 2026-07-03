@@ -7,6 +7,14 @@
 export const LOCAL_USER_ID = "local-user" as const;
 
 /**
+ * Reserved label used to flag a card "needs review" from Study/Test result
+ * screens. Just an ordinary entry in Card.labels — no schema, wire, or
+ * server change — so it syncs as regular content and shows up in the
+ * existing label filter/history views for free.
+ */
+export const FLAGGED_LABEL = "flagged" as const;
+
+/**
  * Cosine-similarity thresholds for the embedding grader.
  *
  * >= PASS_THRESHOLD  → auto-correct
@@ -25,3 +33,22 @@ export const EMBEDDING_FAIL_THRESHOLD = 0.6;
  * Xenova/all-MiniLM-L6-v2 is 384-dim, ~23 MB WASM — small and fast.
  */
 export const EMBEDDING_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
+
+/**
+ * Shown on a correct answer when no AI-authored justification is stored for
+ * the matched answer (e.g. an exact/near-exact match graded by the free
+ * embedding model). Picked at random purely for variety.
+ */
+export const GENERIC_SUCCESS_MESSAGES = [
+  "You've nailed it!",
+  "Exactly right!",
+  "Spot on!",
+  "Nice work!",
+  "Correct!",
+] as const;
+
+export function randomSuccessMessage(): string {
+  return GENERIC_SUCCESS_MESSAGES[
+    Math.floor(Math.random() * GENERIC_SUCCESS_MESSAGES.length)
+  ];
+}

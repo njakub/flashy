@@ -113,12 +113,18 @@ export class EmbeddingGrader implements Grader {
       ...correctAnswers.map((a) => this.getCachedEmbedding(extractor, a)),
     ]);
 
-    // Take the best (maximum) similarity across all accepted answers.
+    // Take the best (maximum) similarity across all accepted answers, and
+    // remember which one it was — callers use this to look up a stored
+    // justification for the matched answer.
     let bestSimilarity = 0;
-    for (const vec of acceptedVecs) {
+    let bestAnswer = correctAnswers[0];
+    acceptedVecs.forEach((vec, i) => {
       const sim = cosineSimilarity(userVec, vec);
-      if (sim > bestSimilarity) bestSimilarity = sim;
-    }
+      if (sim > bestSimilarity) {
+        bestSimilarity = sim;
+        bestAnswer = correctAnswers[i];
+      }
+    });
 
     let outcome: GradeResult["outcome"];
     if (bestSimilarity >= this.passThreshold) {
@@ -129,7 +135,7 @@ export class EmbeddingGrader implements Grader {
       outcome = "ambiguous";
     }
 
-    return { outcome, similarity: bestSimilarity };
+    return { outcome, similarity: bestSimilarity, matchedAnswer: bestAnswer };
   }
 }
 

@@ -152,6 +152,7 @@ function toWireCardPush(c: StoredCard) {
     front: c.front,
     back: c.back,
     alternateAnswers: c.alternateAnswers,
+    answerJustifications: c.answerJustifications,
     labels: c.labels,
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
@@ -198,7 +199,7 @@ function toWireTestRunQuestionPush(q: StoredTestRunQuestion) {
 // loss, worst case one extra round trip.
 // ---------------------------------------------------------------------------
 
-async function applyDeck(wire: WireDeck): Promise<void> {
+export async function applyDeck(wire: WireDeck): Promise<void> {
   const local = await db.decks.get(wire.id);
   if (
     local &&
@@ -217,7 +218,7 @@ async function applyDeck(wire: WireDeck): Promise<void> {
   });
 }
 
-async function applyCard(wire: WireCard): Promise<void> {
+export async function applyCard(wire: WireCard): Promise<void> {
   const local = await db.cards.get(wire.id);
 
   if (!local) {
@@ -228,6 +229,7 @@ async function applyCard(wire: WireCard): Promise<void> {
       front: wire.front,
       back: wire.back,
       alternateAnswers: wire.alternateAnswers,
+      answerJustifications: wire.answerJustifications,
       labels: wire.labels,
       createdAt: wire.createdAt,
       updatedAt: wire.updatedAt,
@@ -260,6 +262,9 @@ async function applyCard(wire: WireCard): Promise<void> {
     alternateAnswers: contentStale
       ? local.alternateAnswers
       : wire.alternateAnswers,
+    answerJustifications: contentStale
+      ? local.answerJustifications
+      : wire.answerJustifications,
     labels: contentStale ? local.labels : wire.labels,
     updatedAt: contentStale ? local.updatedAt : wire.updatedAt,
     deletedAt: contentStale ? local.deletedAt : wire.deletedAt,
@@ -268,7 +273,7 @@ async function applyCard(wire: WireCard): Promise<void> {
   });
 }
 
-async function applyTestRun(wire: WireTestRun): Promise<void> {
+export async function applyTestRun(wire: WireTestRun): Promise<void> {
   await db.testRuns.put({
     id: wire.id,
     ownerId: wire.ownerId,
@@ -288,7 +293,9 @@ async function applyTestRun(wire: WireTestRun): Promise<void> {
   }
 }
 
-async function applyTestRunQuestion(wire: WireTestRunQuestion): Promise<void> {
+export async function applyTestRunQuestion(
+  wire: WireTestRunQuestion,
+): Promise<void> {
   const local = await db.testRunQuestions.get(wire.id);
   if (local) {
     if (local.dirty === 1) await db.testRunQuestions.update(wire.id, { dirty: 0 });

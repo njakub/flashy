@@ -1,22 +1,26 @@
 "use client";
 
-import {
-  useState,
-  useEffect,
-  useCallback,
-  useRef,
-  type FormEvent,
-} from "react";
+import { useState, useEffect, useRef, type FormEvent } from "react";
 import Link from "next/link";
 import { useRepositories } from "@/components/providers/RepositoryProvider";
 import { useAuth } from "@/components/providers/AuthProvider";
+import { useSettings } from "@/components/providers/SettingsProvider";
 import { scheduler } from "@/lib/scheduler";
 import {
   EmbeddingGrader,
   preloadEmbeddingModel,
 } from "@/lib/grading/EmbeddingGrader";
 import { LlmGrader } from "@/lib/grading/LlmGrader";
+import { CodeAwareGrader } from "@/lib/grading/CodeAwareGrader";
 import type { Grader } from "@/lib/grading/Grader";
+import { FLAGGED_LABEL, randomSuccessMessage } from "@/lib/constants";
+import { distinctLabels } from "@/lib/testHistory";
+import { hasCodeFence } from "@/lib/content/markdown";
+import { LabelChips } from "@/components/LabelChips";
+import { CardContent } from "@/components/CardContent";
+import { SpeakButton } from "@/components/SpeakButton";
+import { webSpeechSpeaker } from "@/lib/speech/WebSpeechSpeaker";
+import type { GradingDefault } from "@/lib/settings/wire";
 import type { Card, GradeResult, TestRunQuestion } from "@/lib/types";
 
 /**
@@ -24,8 +28,17 @@ import type { Card, GradeResult, TestRunQuestion } from "@/lib/types";
  * on-device embedding grader (free, works offline) or the AI grader (taps
  * flashy-api's POST /grade, which proxies to Claude — requires sign-in,
  * only fires when the user taps a button). Both implement the same `Grader`
- * interface, so submitAnswer() and the downstream outcome/history flow don't
- * care which one produced a result.
+ * interface, so the shared resolution tail and the downstream outcome/
+ * history flow don't care which one produced a result.
+ *
+ * When the account's default grading method is "ai" (set on /profile), the
+ * primary submit runs a cascade instead of the plain embedding grader: try
+ * the free local model first, and only skip Claude when it's confidently
+ * correct — ambiguous, outright "incorrect", and outright grader failures
+ * all escalate, since a single embedding score isn't trusted to mark an
+ * answer wrong on its own. An LLM-confirmed correct answer is auto-saved as
+ * an accepted alternate on the card, together with the AI's justification,
+ * so the same phrasing grades for free (with the same message) next time.
  */
 
 interface Props {
@@ -53,15 +66,50 @@ function sample<T>(arr: T[], n: number): T[] {
   return a.slice(0, n);
 }
 
+/**
+ * Fills in a success message on a correct result that doesn't already carry
+ * one (i.e. wasn't produced by the LLM, which supplies its own rationale):
+ * the stored justification for the matched answer if the card has one,
+ * otherwise a random generic message. No-op on non-correct outcomes and
+ * when a rationale is already present.
+ */
+function withSuccessMessage(card: Card, result: GradeResult): GradeResult {
+  if (result.outcome !== "correct" || result.rationale) return result;
+  const stored =
+    result.matchedAnswer && card.answerJustifications?.[result.matchedAnswer];
+  return { ...result, rationale: stored || randomSuccessMessage() };
+}
+
 export function TestSession({ deckId }: Props) {
   const { cards, testRuns } = useRepositories();
   const { ownerId, status, getAccessToken } = useAuth();
+  const { gradingDefault } = useSettings();
   const isSignedIn = status === "signedIn";
 
   const embeddingGrader = useRef(new EmbeddingGrader());
+  // Guards embeddingGrader with a code-aware pre-check (§B4): cosine
+  // similarity over natural-language embeddings isn't trustworthy for code,
+  // so a fenced-code card short-circuits straight to normalized exact-match
+  // or self-grade, never trusting a single embedding score to fail it. Only
+  // wraps the local grader — the LLM cascade below is already competent at
+  // code equivalence.
+  const localGrader = useRef<Grader>(new CodeAwareGrader(embeddingGrader.current));
   const llmGrader = useRef(new LlmGrader(getAccessToken));
+  // Snapshot of the account's grading preference for the run in progress —
+  // set once when a quiz starts, not read live, so a preference change on
+  // another device mid-run can't switch behavior under the user. State (not
+  // a ref) because it also drives what the question screen renders (the
+  // standalone AI grade button is redundant — and hidden — once the primary
+  // submit is already running the cascade).
+  const [sessionGradingMode, setSessionGradingMode] =
+    useState<GradingDefault>("local");
+  // Whether the primary submit is already running the AI-assisted cascade
+  // for this session — when true, the separate "AI grade" button (and its
+  // ambiguous-band tiebreaker) are redundant and hidden.
+  const cascadeActive = isSignedIn && sessionGradingMode === "ai";
 
   const [pool, setPool] = useState<Card[]>([]); // full deck card pool
+  const [selectedLabels, setSelectedLabels] = useState<string[]>([]);
   const [queue, setQueue] = useState<Card[]>([]); // current run's random subset
   const [currentIndex, setCurrentIndex] = useState(0);
   const [phase, setPhase] = useState<SessionPhase>("loading");
@@ -87,21 +135,21 @@ export function TestSession({ deckId }: Props) {
   const [alternateInput, setAlternateInput] = useState("");
   const [alternateSaving, setAlternateSaving] = useState(false);
 
-  // Fetch ALL cards in the deck (no due-date filter) and go to count-selection.
-  // Test mode is a random quiz over the full deck; due-date filtering belongs
-  // to Study mode only.
-  const load = useCallback(async () => {
-    setPhase("loading");
-    setGradeError(null);
-    preloadEmbeddingModel();
-    const all = await cards.getByDeck(deckId);
-    setPool(all);
-    setPhase("pick");
-  }, [cards, deckId]);
+  const labelOptions = distinctLabels(pool);
+  const filteredPool =
+    selectedLabels.length > 0
+      ? pool.filter((c) => c.labels.some((l) => selectedLabels.includes(l)))
+      : pool;
 
-  // Start a timed quiz with a fresh random subset of the pool.
+  function toggleLabel(label: string) {
+    setSelectedLabels((prev) =>
+      prev.includes(label) ? prev.filter((l) => l !== label) : [...prev, label],
+    );
+  }
+
+  // Start a timed quiz with a fresh random subset of the (label-filtered) pool.
   function startTest(count: number) {
-    const selected = sample(pool, Math.min(count, pool.length));
+    const selected = sample(filteredPool, Math.min(count, filteredPool.length));
     setQueue(selected);
     setCurrentIndex(0);
     setUserAnswer("");
@@ -110,12 +158,24 @@ export function TestSession({ deckId }: Props) {
     setCorrect(0);
     questionLog.current = [];
     runStartedAt.current = new Date().toISOString();
+    setSessionGradingMode(gradingDefault);
     setPhase("question");
   }
 
+  // Fetch ALL cards in the deck (no due-date filter) and go to count-selection.
+  // Test mode is a random quiz over the full deck; due-date filtering belongs
+  // to Study mode only.
   useEffect(() => {
-    load();
-  }, [load]);
+    async function load() {
+      setPhase("loading");
+      setGradeError(null);
+      preloadEmbeddingModel();
+      const all = await cards.getByDeck(deckId);
+      setPool(all);
+      setPhase("pick");
+    }
+    void load();
+  }, [cards, deckId]);
 
   useEffect(() => {
     if (phase === "question") {
@@ -131,11 +191,58 @@ export function TestSession({ deckId }: Props) {
   }
 
   /**
+   * Appends `text` to the current card's accepted answers, storing an AI
+   * justification alongside it when provided. Used both by the grading
+   * cascade (auto-accept on LLM-correct) and the manual "Accept … for this
+   * card" affordance.
+   */
+  async function addAcceptedAnswer(text: string, justification?: string) {
+    if (!current) return;
+    const trimmed = text.trim();
+    if (!trimmed || acceptedAnswers(current).includes(trimmed)) return;
+    try {
+      const updated = await cards.update(current.id, {
+        alternateAnswers: [...(current.alternateAnswers ?? []), trimmed],
+        ...(justification
+          ? {
+              answerJustifications: {
+                ...(current.answerJustifications ?? {}),
+                [trimmed]: justification,
+              },
+            }
+          : {}),
+      });
+      // Patch the card in the queue so subsequent grading picks it up.
+      setQueue((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+      // Also patch the pool so future runs include it.
+      setPool((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+    } catch (err) {
+      console.error("Failed to save accepted answer:", err);
+    }
+  }
+
+  /**
+   * Shared tail for every grading entry point (local submit, AI button,
+   * ambiguous tiebreaker, cascade) once a grader has produced a resolved
+   * (non-ambiguous) result: auto-accepts the typed answer when the LLM
+   * confirms it's correct, fills in a success message when one isn't
+   * already present, and persists through the usual outcome/history flow.
+   */
+  async function resolveGrade(result: GradeResult, source: "local" | "ai") {
+    if (!current) return;
+    if (source === "ai" && result.outcome === "correct") {
+      await addAcceptedAnswer(userAnswer.trim(), result.rationale);
+    }
+    const finalResult = withSuccessMessage(current, result);
+    setGradeResult(finalResult);
+    setPhase("result");
+    await persistGrade(finalResult.outcome === "correct", finalResult.similarity);
+  }
+
+  /**
    * Grades the current typed answer with whichever Grader is passed in.
    * Shared by the local Grade submit, the top-level AI Grade button, and the
-   * AI-grade tiebreaker in the ambiguous band — all downstream routing
-   * (correct/incorrect -> persist, ambiguous -> self-grade, error -> self-
-   * grade fallback) is identical regardless of which grader produced it.
+   * AI-grade tiebreaker in the ambiguous band.
    */
   async function submitAnswer(grader: Grader, source: "local" | "ai") {
     const answer = userAnswer.trim();
@@ -149,12 +256,11 @@ export function TestSession({ deckId }: Props) {
         acceptedAnswers(current),
         answer,
       );
-      setGradeResult(result);
       if (result.outcome === "ambiguous") {
+        setGradeResult(result);
         setPhase("ambiguous");
       } else {
-        setPhase("result");
-        await persistGrade(result.outcome === "correct", result.similarity);
+        await resolveGrade(result, source);
       }
     } catch (err) {
       // Log full stack so the trace is visible in Firefox DevTools console.
@@ -173,9 +279,76 @@ export function TestSession({ deckId }: Props) {
     }
   }
 
+  /**
+   * "AI-assisted" default: try the free embedding grader first; only skip
+   * the LLM when it's confidently "correct". Anything else — "ambiguous",
+   * an outright "incorrect", or the local model itself failing to load/run
+   * — escalates to Claude. A single embedding score is not trusted to mark
+   * an answer wrong on its own (cosine similarity systematically penalizes
+   * short-but-correct answers against long explanatory accepted answers),
+   * so only a confident match gets to skip the second opinion. Falls back
+   * to the manual self-grade band if the LLM call also fails — same
+   * graceful-degradation shape as submitAnswer.
+   */
+  async function runCascade() {
+    const answer = userAnswer.trim();
+    if (!answer || !current) return;
+    setPhase("grading");
+    setGradeError(null);
+    setActiveGrader("local");
+
+    let embeddingResult: GradeResult | null = null;
+    try {
+      embeddingResult = await localGrader.current.grade(
+        current.front,
+        acceptedAnswers(current),
+        answer,
+      );
+    } catch (err) {
+      console.error("EmbeddingGrader error (cascade):", err);
+      // embeddingResult stays null — falls through to LLM escalation below,
+      // same as a non-"correct" embedding result would.
+    }
+
+    if (embeddingResult && embeddingResult.outcome === "correct") {
+      await resolveGrade(embeddingResult, "local");
+      setActiveGrader(null);
+      return;
+    }
+
+    // Ambiguous, outright "incorrect", or the embedding grader itself
+    // failed — escalate to Claude rather than trust a single local score.
+    setActiveGrader("ai");
+    try {
+      const aiResult = await llmGrader.current.grade(
+        current.front,
+        acceptedAnswers(current),
+        answer,
+      );
+      if (aiResult.outcome === "ambiguous") {
+        setGradeResult(aiResult);
+        setPhase("ambiguous");
+      } else {
+        await resolveGrade(aiResult, "ai");
+      }
+    } catch (err) {
+      console.error("LlmGrader error (cascade):", err);
+      const message = err instanceof Error ? err.message : String(err);
+      setGradeError(message);
+      setGradeResult(embeddingResult ?? { outcome: "ambiguous" });
+      setPhase("ambiguous");
+    } finally {
+      setActiveGrader(null);
+    }
+  }
+
   function handleFormSubmit(e: FormEvent) {
     e.preventDefault();
-    void submitAnswer(embeddingGrader.current, "local");
+    if (cascadeActive) {
+      void runCascade();
+    } else {
+      void submitAnswer(localGrader.current, "local");
+    }
   }
 
   async function persistGrade(isCorrect: boolean, similarity?: number) {
@@ -202,9 +375,14 @@ export function TestSession({ deckId }: Props) {
   async function handleSelfGrade(isCorrect: boolean) {
     await persistGrade(isCorrect, gradeResult?.similarity);
     setPhase("result");
-    setGradeResult((r) =>
-      r ? { ...r, outcome: isCorrect ? "correct" : "incorrect" } : r,
-    );
+    setGradeResult((r) => {
+      if (!r) return r;
+      const updated: GradeResult = {
+        ...r,
+        outcome: isCorrect ? "correct" : "incorrect",
+      };
+      return current ? withSuccessMessage(current, updated) : updated;
+    });
   }
 
   /** Save a completed run to history, then transition to the done screen. */
@@ -232,6 +410,7 @@ export function TestSession({ deckId }: Props) {
   }
 
   function advance() {
+    webSpeechSpeaker.cancel(); // never let read-aloud audio outlive its card
     // Reset "add alternate" state between questions.
     setAddingAlternate(false);
     setAlternateInput("");
@@ -246,26 +425,47 @@ export function TestSession({ deckId }: Props) {
     }
   }
 
+  const isFlagged = current?.labels.includes(FLAGGED_LABEL) ?? false;
+
+  async function toggleFlag() {
+    if (!current) return;
+    const labels = isFlagged
+      ? current.labels.filter((l) => l !== FLAGGED_LABEL)
+      : [...current.labels, FLAGGED_LABEL];
+    const updated = await cards.update(current.id, { labels });
+    setQueue((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+    setPool((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
+  }
+
+  // Keyboard-first review: Enter advances past the result screen (the
+  // question form already submits on Enter via its own onSubmit). Ignored
+  // while typing in the "accept as alternate" input so Enter there doesn't
+  // accidentally skip the question mid-edit.
+  useEffect(() => {
+    if (phase !== "result") return;
+    function onKeyDown(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName))
+        return;
+      if (e.key === "Enter") {
+        e.preventDefault();
+        advance();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
   /** Save a new alternate answer to the current card immediately. */
   async function handleSaveAlternate() {
     const alt = alternateInput.trim();
-    if (!alt || !current) return;
+    if (!alt) return;
     setAlternateSaving(true);
-    try {
-      const updated = await cards.update(current.id, {
-        alternateAnswers: [...(current.alternateAnswers ?? []), alt],
-      });
-      // Patch the card in the queue so subsequent grading picks up the new alternate.
-      setQueue((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
-      // Also patch the pool so future runs include it.
-      setPool((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
-      setAlternateInput("");
-      setAddingAlternate(false);
-    } catch (err) {
-      console.error("Failed to save alternate answer:", err);
-    } finally {
-      setAlternateSaving(false);
-    }
+    await addAcceptedAnswer(alt);
+    setAlternateInput("");
+    setAddingAlternate(false);
+    setAlternateSaving(false);
   }
 
   if (phase === "loading") {
@@ -302,14 +502,27 @@ export function TestSession({ deckId }: Props) {
       {/* Count-selection screen */}
       {phase === "pick" && (
         <div className="rounded-card border border-line bg-surface-1 p-8 space-y-6">
+          {labelOptions.length > 0 && (
+            <LabelChips
+              labels={labelOptions}
+              selected={selectedLabels}
+              onToggle={toggleLabel}
+            />
+          )}
           {pool.length === 0 ? (
             <p className="text-center text-meta text-ink-3">
               No cards in this deck yet.
             </p>
-          ) : pool.length < 5 ? (
+          ) : filteredPool.length === 0 ? (
             <p className="text-center text-meta text-ink-3">
-              Only {pool.length} card{pool.length !== 1 ? "s" : ""} in this deck
-              — need at least 5 for a quiz. Add more cards to get started.
+              No cards match the selected labels.
+            </p>
+          ) : filteredPool.length < 5 ? (
+            <p className="text-center text-meta text-ink-3">
+              Only {filteredPool.length} card
+              {filteredPool.length !== 1 ? "s" : ""}{" "}
+              {selectedLabels.length > 0 ? "match the selected labels" : "in this deck"}
+              — need at least 5 for a quiz.
             </p>
           ) : (
             <>
@@ -318,12 +531,12 @@ export function TestSession({ deckId }: Props) {
                   How many questions?
                 </p>
                 <p className="text-meta text-center text-ink-3">
-                  {pool.length} card{pool.length !== 1 ? "s" : ""} available
+                  {filteredPool.length} card{filteredPool.length !== 1 ? "s" : ""} available
                 </p>
               </div>
               <div className="flex bg-surface-2 border border-line rounded-control p-1 gap-1">
                 {QUIZ_SIZES.map((n) => {
-                  const disabled = n > pool.length;
+                  const disabled = n > filteredPool.length;
                   return (
                     <button
                       key={n}
@@ -411,10 +624,18 @@ export function TestSession({ deckId }: Props) {
       {(phase === "question" || phase === "grading") && current && (
         <div className="space-y-4">
           <div className="rounded-card bg-surface-1 border border-line p-6 min-h-[120px] flex items-center">
-            <p className="text-card-front text-ink-1 whitespace-pre-wrap">
-              {current.front}
-            </p>
+            <CardContent
+              text={current.front}
+              className="text-card-front text-ink-1 flex-1"
+            />
           </div>
+
+          {cascadeActive && (
+            <p className="text-micro text-accent-hi">
+              AI-assisted grading is on — Claude reviews anything the free
+              local check doesn&apos;t confidently mark correct.
+            </p>
+          )}
 
           <form onSubmit={handleFormSubmit} className="space-y-3">
             <div className="flex gap-2">
@@ -432,25 +653,29 @@ export function TestSession({ deckId }: Props) {
                 disabled={phase === "grading" || !userAnswer.trim()}
                 className="text-button rounded-control bg-accent text-on-accent px-5 hover:opacity-90 disabled:opacity-50 transition-opacity"
               >
-                {activeGrader === "local" ? "…" : "→"}
+                {activeGrader !== null ? "…" : "→"}
               </button>
             </div>
 
-            {/* AI Grade — sends this answer to Claude via flashy-api's
-             * POST /grade. Only fires on tap; requires sign-in since the
-             * endpoint is JWT-guarded (the LLM API key never reaches the
-             * client). Local Grade above is unchanged and works signed out. */}
-            <button
-              type="button"
-              onClick={() => void submitAnswer(llmGrader.current, "ai")}
-              disabled={
-                phase === "grading" || !userAnswer.trim() || !isSignedIn
-              }
-              title={isSignedIn ? undefined : "Sign in to use AI grade"}
-              className="text-meta rounded-control border border-line text-ink-2 px-4 py-2 hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-colors"
-            >
-              {activeGrader === "ai" ? "Asking Claude…" : "AI grade"}
-            </button>
+            {/* AI Grade — manual escalation straight to Claude, skipping the
+             * free local check. Only fires on tap; requires sign-in since
+             * the endpoint is JWT-guarded (the LLM API key never reaches the
+             * client). Hidden when AI-assisted is already the session's
+             * default — the primary submit above already runs that cascade,
+             * so this button would be redundant. */}
+            {!cascadeActive && (
+              <button
+                type="button"
+                onClick={() => void submitAnswer(llmGrader.current, "ai")}
+                disabled={
+                  phase === "grading" || !userAnswer.trim() || !isSignedIn
+                }
+                title={isSignedIn ? undefined : "Sign in to use AI grade"}
+                className="text-meta rounded-control border border-line text-ink-2 px-4 py-2 hover:bg-surface-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent transition-colors"
+              >
+                {activeGrader === "ai" ? "Asking Claude…" : "AI grade"}
+              </button>
+            )}
           </form>
 
           {phase === "grading" && activeGrader === "local" && (
@@ -471,9 +696,7 @@ export function TestSession({ deckId }: Props) {
       {phase === "ambiguous" && current && (
         <div className="space-y-4">
           <div className="rounded-card bg-surface-1 border border-line p-6">
-            <p className="text-card-front text-ink-1 whitespace-pre-wrap">
-              {current.front}
-            </p>
+            <CardContent text={current.front} className="text-card-front text-ink-1" />
           </div>
 
           {/* Show grader error if grading failed (either grader) */}
@@ -503,9 +726,12 @@ export function TestSession({ deckId }: Props) {
             <p className="text-meta text-ink-2">
               You wrote <b className="text-ink-1 font-semibold">{userAnswer}</b>
             </p>
-            <p className="text-meta text-ink-2">
-              Accepted{" "}
-              <b className="text-ink-1 font-semibold">{current.back}</b>
+            <p className="text-meta text-ink-2 flex items-center gap-1.5">
+              <span>
+                Accepted{" "}
+                <b className="text-ink-1 font-semibold">{current.back}</b>
+              </span>
+              <SpeakButton text={current.back} />
             </p>
 
             <div className="flex gap-2.5">
@@ -585,10 +811,20 @@ export function TestSession({ deckId }: Props) {
       {/* Result reveal */}
       {phase === "result" && current && gradeResult && (
         <div className="space-y-4">
-          <div className="rounded-card bg-surface-1 border border-line p-6">
-            <p className="text-card-front text-ink-1 whitespace-pre-wrap">
-              {current.front}
-            </p>
+          <div className="rounded-card bg-surface-1 border border-line p-6 relative">
+            <button
+              onClick={() => void toggleFlag()}
+              title={isFlagged ? "Unflag this card" : "Flag this card for review"}
+              className={`absolute top-3 right-3 text-meta transition-colors ${
+                isFlagged ? "text-incorrect" : "text-ink-3 hover:text-ink-1"
+              }`}
+            >
+              ⚑
+            </button>
+            <CardContent
+              text={current.front}
+              className="text-card-front text-ink-1 pr-6"
+            />
           </div>
 
           <div
@@ -624,9 +860,22 @@ export function TestSession({ deckId }: Props) {
             <p className="text-meta text-ink-2">
               You wrote <b className="text-ink-1 font-semibold">{userAnswer}</b>
             </p>
-            <p className="text-meta text-ink-2">
-              Answer <b className="text-ink-1 font-semibold">{current.back}</b>
-            </p>
+            {hasCodeFence(current.back) ? (
+              <div className="text-meta text-ink-2">
+                <div className="flex items-center gap-1.5">
+                  <span>Answer</span>
+                  <SpeakButton text={current.back} />
+                </div>
+                <CardContent text={current.back} className="text-ink-1 font-semibold" />
+              </div>
+            ) : (
+              <p className="text-meta text-ink-2 flex items-center gap-1.5">
+                <span>
+                  Answer <b className="text-ink-1 font-semibold">{current.back}</b>
+                </span>
+                <SpeakButton text={current.back} />
+              </p>
+            )}
             {gradeResult.rationale && (
               <p className="text-micro text-ink-3 italic">
                 “{gradeResult.rationale}”
@@ -681,7 +930,7 @@ export function TestSession({ deckId }: Props) {
             onClick={advance}
             className="w-full text-button rounded-control bg-accent text-on-accent py-3.5 hover:opacity-90 transition-opacity"
           >
-            Next →
+            Next → <kbd className="text-[11px] font-normal opacity-70">(Enter)</kbd>
           </button>
         </div>
       )}
