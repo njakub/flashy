@@ -12,6 +12,7 @@ import {
 } from "@/lib/grading/EmbeddingGrader";
 import { LlmGrader } from "@/lib/grading/LlmGrader";
 import { CodeAwareGrader } from "@/lib/grading/CodeAwareGrader";
+import { useThresholdPrefs } from "@/lib/grading/useThresholdPrefs";
 import type { Grader } from "@/lib/grading/Grader";
 import { FLAGGED_LABEL, randomSuccessMessage } from "@/lib/constants";
 import { distinctLabels } from "@/lib/testHistory";
@@ -20,6 +21,7 @@ import { LabelChips } from "@/components/LabelChips";
 import { CardContent } from "@/components/CardContent";
 import { SpeakButton } from "@/components/SpeakButton";
 import { webSpeechSpeaker } from "@/lib/speech/WebSpeechSpeaker";
+import { useTranscriber } from "@/lib/speech/useTranscriber";
 import type { GradingDefault } from "@/lib/settings/wire";
 import type { Card, GradeResult, TestRunQuestion } from "@/lib/types";
 
@@ -84,9 +86,15 @@ export function TestSession({ deckId }: Props) {
   const { cards, testRuns } = useRepositories();
   const { ownerId, status, getAccessToken } = useAuth();
   const { gradingDefault } = useSettings();
+  const { preset: thresholdPreset } = useThresholdPrefs();
   const isSignedIn = status === "signedIn";
 
-  const embeddingGrader = useRef(new EmbeddingGrader());
+  // Read once at mount (device-local strictness preset — see
+  // useThresholdPrefs); a change made on /profile takes effect the next
+  // time Test mode is entered, same lifetime as the grader instances below.
+  const embeddingGrader = useRef(
+    new EmbeddingGrader(thresholdPreset.passThreshold, thresholdPreset.failThreshold),
+  );
   // Guards embeddingGrader with a code-aware pre-check (§B4): cosine
   // similarity over natural-language embeddings isn't trustworthy for code,
   // so a fenced-code card short-circuits straight to normalized exact-match
@@ -124,6 +132,38 @@ export function TestSession({ deckId }: Props) {
   const [reviewed, setReviewed] = useState(0);
   const [correct, setCorrect] = useState(0);
   const answerRef = useRef<HTMLTextAreaElement>(null);
+
+  // Voice input (§D) — transcript lands directly in userAnswer, editable in
+  // the same textarea before submit, so the grading pipeline below is
+  // entirely unchanged by this.
+  const transcriber = useTranscriber();
+  const [micError, setMicError] = useState<string | null>(null);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+
+  useEffect(() => {
+    if (transcriber.state !== "recording") return;
+    const id = setInterval(() => setRecordingSeconds((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [transcriber.state]);
+
+  async function handleMicClick() {
+    setMicError(null);
+    if (transcriber.state === "idle") {
+      setRecordingSeconds(0);
+      try {
+        await transcriber.start();
+      } catch (err) {
+        setMicError(err instanceof Error ? err.message : "Microphone access failed.");
+      }
+    } else if (transcriber.state === "recording") {
+      try {
+        const text = await transcriber.stop();
+        if (text) setUserAnswer(text);
+      } catch (err) {
+        setMicError(err instanceof Error ? err.message : "Transcription failed.");
+      }
+    }
+  }
 
   // Accumulated per-question outcomes for the run; flushed to DB on completion.
   const questionLog = useRef<Omit<TestRunQuestion, "id" | "runId">[]>([]);
@@ -411,6 +451,7 @@ export function TestSession({ deckId }: Props) {
 
   function advance() {
     webSpeechSpeaker.cancel(); // never let read-aloud audio outlive its card
+    transcriber.cancel(); // ditto for a stray in-progress recording
     // Reset "add alternate" state between questions.
     setAddingAlternate(false);
     setAlternateInput("");
@@ -648,6 +689,31 @@ export function TestSession({ deckId }: Props) {
                 disabled={phase === "grading"}
                 className="flex-1 rounded-control bg-surface-2 border border-line-2 px-4 py-3 text-base text-ink-1 placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-accent resize-none disabled:opacity-60"
               />
+              {transcriber.supported && (
+                <button
+                  type="button"
+                  onClick={() => void handleMicClick()}
+                  disabled={
+                    phase === "grading" ||
+                    transcriber.state === "requesting" ||
+                    transcriber.state === "transcribing"
+                  }
+                  title="Voice input — transcribed on your device, audio never leaves your browser"
+                  className={`text-button rounded-control px-4 border transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
+                    transcriber.state === "recording"
+                      ? "bg-incorrect-soft border-incorrect-soft text-incorrect animate-pulse"
+                      : "border-line-2 text-ink-2 hover:bg-surface-2"
+                  }`}
+                >
+                  {transcriber.state === "recording"
+                    ? `⏹ ${recordingSeconds}s`
+                    : transcriber.state === "requesting"
+                      ? "…"
+                      : transcriber.state === "transcribing"
+                        ? "…"
+                        : "🎤"}
+                </button>
+              )}
               <button
                 type="submit"
                 disabled={phase === "grading" || !userAnswer.trim()}
@@ -656,6 +722,24 @@ export function TestSession({ deckId }: Props) {
                 {activeGrader !== null ? "…" : "→"}
               </button>
             </div>
+
+            {transcriber.state === "recording" &&
+              transcriber.modelProgress !== null &&
+              transcriber.modelProgress < 100 && (
+                <p className="text-meta text-ink-3 text-center">
+                  Loading voice model in the background… {transcriber.modelProgress}%
+                </p>
+              )}
+            {transcriber.state === "transcribing" && (
+              <p className="text-meta text-ink-3 text-center">
+                {transcriber.modelProgress !== null && transcriber.modelProgress < 100
+                  ? `Loading voice model… ${transcriber.modelProgress}%`
+                  : "Transcribing…"}
+              </p>
+            )}
+            {micError && (
+              <p className="text-micro text-incorrect text-center">{micError}</p>
+            )}
 
             {/* AI Grade — manual escalation straight to Claude, skipping the
              * free local check. Only fires on tap; requires sign-in since

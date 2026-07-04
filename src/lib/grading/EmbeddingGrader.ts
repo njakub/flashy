@@ -20,31 +20,17 @@ import {
   EMBEDDING_PASS_THRESHOLD,
   EMBEDDING_FAIL_THRESHOLD,
 } from "@/lib/constants";
+import { getPipeline } from "@/lib/models/pipelineCache";
 
-// Module-level cache so the model is only loaded once per page session.
-let pipelinePromise: Promise<unknown> | null = null;
+type EmbeddingPipeline = (
+  text: string,
+  opts: Record<string, unknown>,
+) => Promise<{ data: Float32Array }>;
 
-async function getPipeline() {
-  if (!pipelinePromise) {
-    // Dynamic import keeps the large WASM bundle out of the initial JS payload.
-    pipelinePromise = import("@huggingface/transformers")
-      .then(async ({ pipeline }) => {
-        return pipeline("feature-extraction", EMBEDDING_MODEL_ID, {
-          dtype: "q8",
-        });
-      })
-      .catch((err) => {
-        // Reset so the next call can retry rather than permanently failing.
-        pipelinePromise = null;
-        throw err;
-      });
-  }
-  return pipelinePromise as Promise<
-    (
-      text: string,
-      opts: Record<string, unknown>,
-    ) => Promise<{ data: Float32Array }>
-  >;
+function getEmbeddingPipeline(): Promise<EmbeddingPipeline> {
+  return getPipeline<EmbeddingPipeline>("feature-extraction", EMBEDDING_MODEL_ID, {
+    dtype: "q8",
+  });
 }
 
 function cosineSimilarity(a: Float32Array, b: Float32Array): number {
@@ -86,7 +72,7 @@ export class EmbeddingGrader implements Grader {
 
   /** Returns a cached embedding or computes + caches a new one. */
   private async getCachedEmbedding(
-    extractor: Awaited<ReturnType<typeof getPipeline>>,
+    extractor: EmbeddingPipeline,
     text: string,
   ): Promise<Float32Array> {
     const cached = this.embeddingCache.get(text);
@@ -105,7 +91,7 @@ export class EmbeddingGrader implements Grader {
     if (correctAnswers.length === 0) {
       throw new Error("correctAnswers must contain at least one answer");
     }
-    const extractor = await getPipeline();
+    const extractor = await getEmbeddingPipeline();
 
     // Embed all accepted answers + user answer, reusing cache for repeated strings.
     const [userVec, ...acceptedVecs] = await Promise.all([
@@ -145,7 +131,7 @@ export class EmbeddingGrader implements Grader {
  */
 export function preloadEmbeddingModel(): void {
   // Fire-and-forget warm-up. Errors are intentionally ignored here because
-  // getPipeline() resets pipelinePromise on failure, so the next grade() call
-  // will retry. A network error at preload time is not fatal.
-  getPipeline().catch(() => undefined);
+  // the shared pipeline cache deletes its entry on rejection, so the next
+  // grade() call will retry. A network error at preload time is not fatal.
+  getEmbeddingPipeline().catch(() => undefined);
 }

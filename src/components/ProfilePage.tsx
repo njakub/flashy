@@ -6,6 +6,8 @@ import { useAuth } from "@/components/providers/AuthProvider";
 import { useSettings } from "@/components/providers/SettingsProvider";
 import { UserClient } from "@/lib/settings/UserClient";
 import { useSpeechPrefs } from "@/lib/speech/useSpeechPrefs";
+import { useThresholdPrefs } from "@/lib/grading/useThresholdPrefs";
+import { THRESHOLD_PRESETS } from "@/lib/grading/thresholdPresets";
 import type { GradingDefault } from "@/lib/settings/wire";
 
 const GRADING_OPTIONS: { value: GradingDefault; label: string }[] = [
@@ -17,6 +19,7 @@ export function ProfilePage() {
   const { status, user, getAccessToken, logout } = useAuth();
   const { gradingDefault, setGradingDefault } = useSettings();
   const { showSpeakButtons, setShowSpeakButtons } = useSpeechPrefs();
+  const { preset: thresholdPreset, setPresetKey } = useThresholdPrefs();
   const isSignedIn = status === "signedIn";
 
   const [signInMethods, setSignInMethods] = useState<{
@@ -151,6 +154,37 @@ export function ProfilePage() {
           >
             {showSpeakButtons ? "On" : "Off"}
           </button>
+        </div>
+      </div>
+
+      <div className="rounded-card border border-line bg-surface-1 p-6 space-y-3">
+        <div>
+          <p className="text-micro text-ink-3 uppercase tracking-wide">
+            Grading strictness
+          </p>
+          <p className="text-meta text-ink-2 mt-1">
+            {thresholdPreset.description}{" "}
+            This is a per-device setting — it doesn&apos;t sync.
+          </p>
+        </div>
+        <div className="flex bg-surface-2 border border-line rounded-control p-1 gap-1">
+          {THRESHOLD_PRESETS.map(({ key, label }) => {
+            const active = thresholdPreset.key === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setPresetKey(key)}
+                className={`flex-1 rounded-control py-3 text-button transition-colors ${
+                  active
+                    ? "bg-accent text-on-accent"
+                    : "text-ink-2 hover:bg-surface-3"
+                }`}
+              >
+                {label}
+              </button>
+            );
+          })}
         </div>
       </div>
 

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { useRepositories } from "@/components/providers/RepositoryProvider";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { useReloadOnSync } from "@/lib/sync/useReloadOnSync";
+import { StatsPanel } from "@/components/StatsPanel";
 import type { Deck } from "@/lib/types";
 
 /** Two-letter monogram for the deck icon — presentational only. */
@@ -62,6 +63,8 @@ export function DeckList() {
   return (
     <div className="w-full max-w-xl mx-auto py-10 px-4 space-y-6">
       <h1 className="text-display tracking-tight">Decks</h1>
+
+      {deckList.length > 0 && <StatsPanel />}
 
       {/* Create deck */}
       <form onSubmit={handleCreate} className="flex gap-2">

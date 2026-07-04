@@ -35,6 +35,9 @@ export interface DeckRepository {
 export interface CardRepository {
   getByDeck(deckId: string): Promise<Card[]>;
   getDueCards(deckId: string | null, now: Date): Promise<Card[]>;
+  /** Every card across every deck this owner has — cross-deck aggregates
+   * (e.g. the dashboard streak) only, never a per-deck view. */
+  getAllByOwner(ownerId: string): Promise<Card[]>;
   getById(id: string): Promise<Card | undefined>;
   create(card: Omit<Card, "id" | "createdAt" | "updatedAt">): Promise<Card>;
   update(
@@ -68,6 +71,10 @@ export interface TestRunRepository {
 
   /** All runs for a deck, newest first. */
   getRunsByDeck(deckId: string): Promise<TestRun[]>;
+
+  /** Every run across every deck this owner has — cross-deck aggregates
+   * (e.g. the dashboard streak/accuracy) only, never a per-deck view. */
+  getRunsByOwner(ownerId: string): Promise<TestRun[]>;
 
   /** Single run lookup — e.g. for a run-detail screen. */
   getRunById(id: string): Promise<TestRun | undefined>;

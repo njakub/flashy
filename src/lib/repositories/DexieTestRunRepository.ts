@@ -45,6 +45,11 @@ export class DexieTestRunRepository implements TestRunRepository {
     return runs.filter(notDeleted).sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   }
 
+  async getRunsByOwner(ownerId: string): Promise<TestRun[]> {
+    const runs = await db.testRuns.where("ownerId").equals(ownerId).toArray();
+    return runs.filter(notDeleted);
+  }
+
   async getRunById(id: string): Promise<TestRun | undefined> {
     const run = await db.testRuns.get(id);
     return run && notDeleted(run) ? run : undefined;

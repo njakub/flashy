@@ -35,6 +35,13 @@ export const EMBEDDING_FAIL_THRESHOLD = 0.6;
 export const EMBEDDING_MODEL_ID = "Xenova/all-MiniLM-L6-v2";
 
 /**
+ * The Hugging Face model id used by the on-device Whisper transcriber for
+ * voice input (English-only, ~40 MB q8 WASM). Not preloaded — only fetched
+ * on first mic tap (see src/lib/speech/WhisperTranscriber.ts).
+ */
+export const WHISPER_MODEL_ID = "onnx-community/whisper-tiny.en";
+
+/**
  * Shown on a correct answer when no AI-authored justification is stored for
  * the matched answer (e.g. an exact/near-exact match graded by the free
  * embedding model). Picked at random purely for variety.

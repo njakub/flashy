@@ -9,7 +9,7 @@ import { useReloadOnSync } from "@/lib/sync/useReloadOnSync";
 import { DEFAULT_SCHEDULING_STATE } from "@/lib/scheduler";
 import {
   buildExportFile,
-  parseImportFile,
+  parseImportByFilename,
   sanitizeFilename,
 } from "@/lib/importExport";
 import { FLAGGED_LABEL } from "@/lib/constants";
@@ -125,7 +125,7 @@ export function DeckDetail({ deckId }: Props) {
       return;
     }
 
-    const outcome = parseImportFile(raw);
+    const outcome = parseImportByFilename(file.name, raw);
     if (!outcome.ok) {
       setError(`Import failed: ${outcome.fileError}. No cards were changed.`);
       return;
@@ -300,27 +300,35 @@ export function DeckDetail({ deckId }: Props) {
       </div>
 
       {/* Import / export */}
-      <div className="flex gap-2">
-        <button
-          onClick={handleExport}
-          disabled={cardList.length === 0}
-          className="text-micro rounded-chip border border-line text-ink-2 px-3 py-1.5 hover:bg-surface-2 transition-colors disabled:opacity-50"
-        >
-          Export cards
-        </button>
-        <button
-          onClick={handleImportClick}
-          className="text-micro rounded-chip border border-line text-ink-2 px-3 py-1.5 hover:bg-surface-2 transition-colors"
-        >
-          Import cards
-        </button>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".json,application/json"
-          onChange={handleImportFile}
-          className="hidden"
-        />
+      <div className="space-y-1.5">
+        <div className="flex gap-2">
+          <button
+            onClick={handleExport}
+            disabled={cardList.length === 0}
+            className="text-micro rounded-chip border border-line text-ink-2 px-3 py-1.5 hover:bg-surface-2 transition-colors disabled:opacity-50"
+          >
+            Export cards
+          </button>
+          <button
+            onClick={handleImportClick}
+            title="JSON export, CSV (front,back,alternates,labels), or plain text (front | back, one per line)"
+            className="text-micro rounded-chip border border-line text-ink-2 px-3 py-1.5 hover:bg-surface-2 transition-colors"
+          >
+            Import cards
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".json,application/json,.csv,text/csv,.txt,text/plain"
+            onChange={handleImportFile}
+            className="hidden"
+          />
+        </div>
+        <p className="text-micro text-ink-3">
+          Import formats: JSON export, CSV (front,back,alternates,labels —
+          &ldquo;;&rdquo; separates multiple alternates/labels), or plain
+          text (one card per line, front | back).
+        </p>
       </div>
 
       {/* Add card */}

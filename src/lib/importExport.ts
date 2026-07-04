@@ -129,6 +129,147 @@ export function parseImportFile(raw: string): ImportParseOutcome {
   return { ok: true, result: { cards, errors } };
 }
 
+/**
+ * Plain-text import: one card per line, "front<TAB>back" or "front | back".
+ * The fastest authoring path — pasting lines straight out of notes — so it
+ * deliberately has no alternates/labels column; use CSV for that.
+ */
+export function parsePlainText(raw: string): ImportParseOutcome {
+  const lines = raw.split(/\r?\n/);
+  const cards: ExportedCard[] = [];
+  const errors: ImportRowError[] = [];
+  let sawAnyContent = false;
+
+  lines.forEach((rawLine, index) => {
+    const line = rawLine.trim();
+    if (line === "") return; // blank lines are skipped silently
+    sawAnyContent = true;
+
+    const sep = line.includes("\t") ? "\t" : line.includes("|") ? "|" : null;
+    if (!sep) {
+      errors.push({
+        index,
+        reason: 'Expected "front<TAB>back" or "front | back".',
+      });
+      return;
+    }
+    const sepIndex = line.indexOf(sep);
+    const front = line.slice(0, sepIndex).trim();
+    const back = line.slice(sepIndex + 1).trim();
+    if (!front) {
+      errors.push({ index, reason: 'Missing "front".' });
+      return;
+    }
+    if (!back) {
+      errors.push({ index, reason: 'Missing "back".' });
+      return;
+    }
+    cards.push({ front, back, alternateAnswers: [], labels: [] });
+  });
+
+  if (!sawAnyContent) {
+    return { ok: false, fileError: "File is empty." };
+  }
+  return { ok: true, result: { cards, errors } };
+}
+
+/** Minimal RFC4180-ish CSV line splitter: handles double-quoted fields
+ * (including embedded commas and "" as an escaped quote). */
+function parseCsvLine(line: string): string[] {
+  const fields: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      fields.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  fields.push(cur);
+  return fields;
+}
+
+/**
+ * CSV import: front,back,alternates,labels — alternates/labels are each a
+ * single field with ";"-separated entries. An optional header row
+ * ("front,back,...") is detected and skipped.
+ */
+export function parseCsv(raw: string): ImportParseOutcome {
+  const lines = raw.split(/\r?\n/);
+  const cards: ExportedCard[] = [];
+  const errors: ImportRowError[] = [];
+  let sawAnyContent = false;
+  let sawFirstRow = false;
+
+  lines.forEach((rawLine, index) => {
+    if (rawLine.trim() === "") return; // blank lines are skipped silently
+    sawAnyContent = true;
+
+    const fields = parseCsvLine(rawLine).map((f) => f.trim());
+    if (!sawFirstRow) {
+      sawFirstRow = true;
+      if (
+        fields[0]?.toLowerCase() === "front" &&
+        fields[1]?.toLowerCase() === "back"
+      ) {
+        return; // header row, skip
+      }
+    }
+
+    const [front = "", back = "", altsRaw = "", labelsRaw = ""] = fields;
+    if (!front) {
+      errors.push({ index, reason: 'Missing "front".' });
+      return;
+    }
+    if (!back) {
+      errors.push({ index, reason: 'Missing "back".' });
+      return;
+    }
+    const alternateAnswers = altsRaw
+      .split(";")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const labels = labelsRaw
+      .split(";")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    cards.push({ front, back, alternateAnswers, labels });
+  });
+
+  if (!sawAnyContent) {
+    return { ok: false, fileError: "File is empty." };
+  }
+  return { ok: true, result: { cards, errors } };
+}
+
+/** Dispatches to the right parser by file extension — the JSON envelope
+ * (buildExportFile's own format) remains the default/fallback. */
+export function parseImportByFilename(
+  filename: string,
+  raw: string,
+): ImportParseOutcome {
+  const ext = filename.toLowerCase().split(".").pop();
+  if (ext === "csv") return parseCsv(raw);
+  if (ext === "txt") return parsePlainText(raw);
+  return parseImportFile(raw);
+}
+
 export function sanitizeFilename(name: string): string {
   const cleaned = name
     .trim()
