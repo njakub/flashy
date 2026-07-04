@@ -21,6 +21,13 @@ const plexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "Flashy",
   description: "Local-first flashcard study app with spaced repetition",
+  manifest: "/manifest.webmanifest",
+  themeColor: "#6366f1",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Flashy",
+  },
 };
 
 export default function RootLayout({
