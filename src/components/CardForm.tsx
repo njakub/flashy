@@ -58,6 +58,7 @@ export function CardForm({ deckId, cardId }: Props) {
   const [front, setFront] = useState("");
   const [back, setBack] = useState("");
   const [alternateAnswers, setAlternateAnswers] = useState<string[]>([]);
+  const [keyPoints, setKeyPoints] = useState<string[]>([]);
   const [labelInput, setLabelInput] = useState(""); // comma-separated input value
   const [labels, setLabels] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
@@ -77,6 +78,7 @@ export function CardForm({ deckId, cardId }: Props) {
         setFront(c.front);
         setBack(c.back);
         setAlternateAnswers(c.alternateAnswers ?? []);
+        setKeyPoints(c.keyPoints ?? []);
         setLabels(c.labels ?? []);
         setLabelInput((c.labels ?? []).join(", "));
       }
@@ -104,6 +106,18 @@ export function CardForm({ deckId, cardId }: Props) {
     setAlternateAnswers((prev) => prev.filter((_, i) => i !== index));
   }
 
+  function addKeyPoint() {
+    setKeyPoints((prev) => [...prev, ""]);
+  }
+
+  function updateKeyPoint(index: number, value: string) {
+    setKeyPoints((prev) => prev.map((p, i) => (i === index ? value : p)));
+  }
+
+  function removeKeyPoint(index: number) {
+    setKeyPoints((prev) => prev.filter((_, i) => i !== index));
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const f = front.trim();
@@ -113,6 +127,7 @@ export function CardForm({ deckId, cardId }: Props) {
       return;
     }
     const alts = alternateAnswers.map((a) => a.trim()).filter(Boolean);
+    const kps = keyPoints.map((k) => k.trim()).filter(Boolean);
     const lbs = parseLabels(labelInput);
     setSaving(true);
     setError(null);
@@ -122,6 +137,7 @@ export function CardForm({ deckId, cardId }: Props) {
           front: f,
           back: b,
           alternateAnswers: alts,
+          keyPoints: kps,
           labels: lbs,
         });
       } else {
@@ -131,6 +147,7 @@ export function CardForm({ deckId, cardId }: Props) {
           front: f,
           back: b,
           alternateAnswers: alts,
+          keyPoints: kps,
           labels: lbs,
           scheduling: DEFAULT_SCHEDULING_STATE(),
         });
@@ -206,6 +223,49 @@ export function CardForm({ deckId, cardId }: Props) {
               <button
                 type="button"
                 onClick={() => removeAlternate(i)}
+                className="text-meta text-incorrect hover:opacity-80 transition-opacity px-1"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+
+        {/* Key points — the rubric for a concept card. A card IS a concept
+         * card exactly when it has key points; no separate type toggle. */}
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <label className="block text-micro text-ink-2">
+              Key points
+              <span className="ml-1 text-ink-3">
+                (for concept cards — what a complete answer should cover)
+              </span>
+            </label>
+            <button
+              type="button"
+              onClick={addKeyPoint}
+              className="text-micro text-accent-hi hover:opacity-80 transition-opacity"
+            >
+              + Add
+            </button>
+          </div>
+          {keyPoints.length === 0 && (
+            <p className="text-meta text-ink-3">
+              None — this is a regular Q/A card.
+            </p>
+          )}
+          {keyPoints.map((point, i) => (
+            <div key={i} className="flex gap-2">
+              <input
+                type="text"
+                value={point}
+                onChange={(e) => updateKeyPoint(i, e.target.value)}
+                placeholder={`Key point ${i + 1}…`}
+                className="flex-1 rounded-control bg-surface-2 border border-line-2 px-4 py-2.5 text-base text-ink-1 placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-accent"
+              />
+              <button
+                type="button"
+                onClick={() => removeKeyPoint(i)}
                 className="text-meta text-incorrect hover:opacity-80 transition-opacity px-1"
               >
                 ✕

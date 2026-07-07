@@ -39,8 +39,21 @@ describe("buildExportFile", () => {
     expect(file.formatVersion).toBe(IMPORT_EXPORT_FORMAT_VERSION);
     expect(file.deckName).toBe("My Deck");
     expect(file.cards).toEqual([
-      { front: "front", back: "back", alternateAnswers: ["alt"], labels: ["l1"] },
+      {
+        front: "front",
+        back: "back",
+        alternateAnswers: ["alt"],
+        labels: ["l1"],
+        keyPoints: [],
+      },
     ]);
+  });
+
+  it("includes keyPoints when the card is a concept card", () => {
+    const file = buildExportFile("My Deck", [
+      makeCard({ keyPoints: ["point 1", "point 2"] }),
+    ]);
+    expect(file.cards[0].keyPoints).toEqual(["point 1", "point 2"]);
   });
 });
 
@@ -85,18 +98,28 @@ describe("parseImportFile — per-row validation", () => {
     if (result.ok) {
       expect(result.result.errors).toEqual([]);
       expect(result.result.cards).toEqual([
-        { front: "q", back: "a", alternateAnswers: ["x"], labels: ["y"] },
+        { front: "q", back: "a", alternateAnswers: ["x"], labels: ["y"], keyPoints: [] },
       ]);
     }
   });
 
-  it("defaults missing alternateAnswers/labels to []", () => {
+  it("defaults missing alternateAnswers/labels/keyPoints to []", () => {
     const result = parseImportFile(fileWith([{ front: "q", back: "a" }]));
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.result.cards).toEqual([
-        { front: "q", back: "a", alternateAnswers: [], labels: [] },
+        { front: "q", back: "a", alternateAnswers: [], labels: [], keyPoints: [] },
       ]);
+    }
+  });
+
+  it("round-trips keyPoints when present", () => {
+    const result = parseImportFile(
+      fileWith([{ front: "q", back: "a", keyPoints: ["point 1", "point 2"] }]),
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.result.cards[0].keyPoints).toEqual(["point 1", "point 2"]);
     }
   });
 
@@ -108,15 +131,16 @@ describe("parseImportFile — per-row validation", () => {
         { front: "q2" }, // missing back
         { front: "q3", back: "a", alternateAnswers: "not-an-array" },
         { front: "q4", back: "a", labels: [1, 2] },
+        { front: "q5", back: "a", keyPoints: "not-an-array" },
         "not-an-object",
       ]),
     );
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.result.cards).toEqual([
-        { front: "good", back: "a", alternateAnswers: [], labels: [] },
+        { front: "good", back: "a", alternateAnswers: [], labels: [], keyPoints: [] },
       ]);
-      expect(result.result.errors.map((e) => e.index)).toEqual([1, 2, 3, 4, 5]);
+      expect(result.result.errors.map((e) => e.index)).toEqual([1, 2, 3, 4, 5, 6]);
     }
   });
 });
@@ -127,8 +151,8 @@ describe("parsePlainText", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.result.cards).toEqual([
-        { front: "front1", back: "back1", alternateAnswers: [], labels: [] },
-        { front: "front2", back: "back2", alternateAnswers: [], labels: [] },
+        { front: "front1", back: "back1", alternateAnswers: [], labels: [], keyPoints: [] },
+        { front: "front2", back: "back2", alternateAnswers: [], labels: [], keyPoints: [] },
       ]);
     }
   });
@@ -138,7 +162,7 @@ describe("parsePlainText", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.result.cards).toEqual([
-        { front: "front1", back: "back1", alternateAnswers: [], labels: [] },
+        { front: "front1", back: "back1", alternateAnswers: [], labels: [], keyPoints: [] },
       ]);
     }
   });
@@ -189,17 +213,31 @@ describe("parseCsv", () => {
           back: "correr",
           alternateAnswers: ["corriendo", "corre"],
           labels: ["verbs", "irregular"],
+          keyPoints: [],
         },
       ]);
     }
   });
 
-  it("defaults alternates/labels to [] when those columns are omitted", () => {
+  it("defaults alternates/labels/keypoints to [] when those columns are omitted", () => {
     const result = parseCsv("front1,back1");
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.result.cards).toEqual([
-        { front: "front1", back: "back1", alternateAnswers: [], labels: [] },
+        { front: "front1", back: "back1", alternateAnswers: [], labels: [], keyPoints: [] },
+      ]);
+    }
+  });
+
+  it("parses an optional 5th ';'-separated keypoints column", () => {
+    const result = parseCsv(
+      "Explain closures,A closure bundles a function with its scope.,,,captures variables;persists scope",
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.result.cards[0].keyPoints).toEqual([
+        "captures variables",
+        "persists scope",
       ]);
     }
   });
@@ -225,7 +263,7 @@ describe("parseCsv", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.result.cards).toEqual([
-        { front: "q1", back: "a1", alternateAnswers: [], labels: [] },
+        { front: "q1", back: "a1", alternateAnswers: [], labels: [], keyPoints: [] },
       ]);
     }
   });
@@ -235,7 +273,13 @@ describe("parseCsv", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.result.cards).toEqual([
-        { front: "Front door", back: "Back yard", alternateAnswers: [], labels: [] },
+        {
+          front: "Front door",
+          back: "Back yard",
+          alternateAnswers: [],
+          labels: [],
+          keyPoints: [],
+        },
       ]);
     }
   });

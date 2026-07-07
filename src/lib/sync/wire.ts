@@ -31,6 +31,10 @@ export interface WireCard {
   alternateAnswers: string[];
   answerJustifications?: Record<string, string>;
   labels: string[];
+  // Optional in this client mirror (unlike the server's required WireCard)
+  // so a not-yet-deployed server's pull responses — which omit the field
+  // entirely — still satisfy this type during rollout.
+  keyPoints?: string[];
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;

@@ -16,6 +16,11 @@ export interface Grader {
    * @param correctAnswers  All accepted answers: [card.back, ...card.alternateAnswers].
    *                        Passes if the user's answer matches ANY of them.
    * @param userAnswer      What the user typed.
+   * @param keyPoints       Present + non-empty only for concept cards (long-form
+   *                        interview-style questions) — a rubric of things a
+   *                        complete answer should cover. Implementations that
+   *                        can't judge long-form coverage (EmbeddingGrader) must
+   *                        not attempt to score it; see ConceptAwareGrader.
    * @returns               A GradeResult with outcome and optional similarity.
    *                        similarity reflects the best match across all accepted answers.
    */
@@ -23,5 +28,6 @@ export interface Grader {
     cardFront: string,
     correctAnswers: string[],
     userAnswer: string,
+    keyPoints?: string[],
   ): Promise<GradeResult>;
 }

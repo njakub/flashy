@@ -25,6 +25,7 @@ export class LlmGrader implements Grader {
     cardFront: string,
     correctAnswers: string[],
     userAnswer: string,
+    keyPoints?: string[],
   ): Promise<GradeResult> {
     const token = await this.getAccessToken();
     if (!token) {
@@ -35,6 +36,7 @@ export class LlmGrader implements Grader {
       question: cardFront,
       acceptedAnswers: correctAnswers,
       userAnswer,
+      ...(keyPoints && keyPoints.length > 0 ? { keyPoints } : {}),
     };
 
     const res = await fetch(`${API_BASE_URL}/grade`, {
@@ -50,6 +52,6 @@ export class LlmGrader implements Grader {
     }
     const data = (await res.json()) as GradeResponseBody;
 
-    return { outcome: data.outcome, rationale: data.rationale };
+    return { outcome: data.outcome, rationale: data.rationale, coverage: data.coverage };
   }
 }

@@ -133,6 +133,84 @@ describe("applyCard — four-quadrant conflict matrix", () => {
   });
 });
 
+describe("applyCard — keyPoints (concept-card rubric, joins the content group)", () => {
+  it("wire keyPoints overwrites local when content isn't stale, including [] clearing it", async () => {
+    await seedLocalCard({
+      updatedAt: "2026-01-01T00:00:00.000Z", // older than wire
+      scheduling: { ...SCHEDULING, lastReviewedAt: null },
+      keyPoints: ["old point 1", "old point 2"],
+      dirty: 1,
+    });
+    await applyCard(wireCard({ keyPoints: [] }));
+    const local = await db.cards.get("c1");
+    expect(local?.keyPoints).toEqual([]); // an explicit [] legitimately clears
+  });
+
+  it("wire keyPoints overwrites local with new values when content isn't stale", async () => {
+    await seedLocalCard({
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      scheduling: { ...SCHEDULING, lastReviewedAt: null },
+      keyPoints: ["old point"],
+      dirty: 1,
+    });
+    await applyCard(wireCard({ keyPoints: ["new point 1", "new point 2"] }));
+    const local = await db.cards.get("c1");
+    expect(local?.keyPoints).toEqual(["new point 1", "new point 2"]);
+  });
+
+  it("keeps local keyPoints when local content raced ahead (contentStale), still dirty", async () => {
+    await seedLocalCard({
+      updatedAt: "2026-01-01T00:20:00.000Z", // newer than wire -> content stale on wire
+      scheduling: { ...SCHEDULING, lastReviewedAt: null },
+      keyPoints: ["local point"],
+      dirty: 1,
+    });
+    await applyCard(wireCard({ keyPoints: ["wire point"] }));
+    const local = await db.cards.get("c1");
+    expect(local?.keyPoints).toEqual(["local point"]);
+    expect(local?.dirty).toBe(1);
+  });
+
+  it("a wire row without keyPoints (rollout shape — server not yet deployed) preserves local, doesn't null it", async () => {
+    await seedLocalCard({
+      updatedAt: "2026-01-01T00:00:00.000Z", // older than wire -> content not stale
+      scheduling: { ...SCHEDULING, lastReviewedAt: null },
+      keyPoints: ["local point 1", "local point 2"],
+      dirty: 1,
+    });
+    const wire = wireCard();
+    delete (wire as { keyPoints?: string[] }).keyPoints;
+    await applyCard(wire);
+    const local = await db.cards.get("c1");
+    expect(local?.keyPoints).toEqual(["local point 1", "local point 2"]);
+  });
+
+  it("keyPoints follows the content winner independently of the scheduling winner", async () => {
+    // Scheduling raced ahead locally (quadrant 3): content comes from wire,
+    // scheduling stays local — keyPoints (part of the content group) must
+    // follow the same winner as front/back, not the scheduling winner.
+    await seedLocalCard({
+      updatedAt: "2026-01-01T00:00:00.000Z", // content not stale -> wire content wins
+      scheduling: { ...SCHEDULING, lastReviewedAt: "2026-01-01T00:30:00.000Z" }, // scheduling stale on wire
+      keyPoints: ["local point"],
+      dirty: 1,
+    });
+    await applyCard(wireCard({ keyPoints: ["wire point"] }));
+    const local = await db.cards.get("c1");
+    expect(local?.front).toBe("wire-front");
+    expect(local?.keyPoints).toEqual(["wire point"]);
+    expect(local?.scheduling.lastReviewedAt).toBe("2026-01-01T00:30:00.000Z");
+  });
+
+  it("a new card (no local row) defaults keyPoints to [] when the wire row omits it", async () => {
+    const wire = wireCard();
+    delete (wire as { keyPoints?: string[] }).keyPoints;
+    await applyCard(wire);
+    const local = await db.cards.get("c1");
+    expect(local?.keyPoints).toEqual([]);
+  });
+});
+
 describe("applyDeck", () => {
   const wireDeck = (overrides: Partial<WireDeck> = {}): WireDeck => ({
     id: "d1",

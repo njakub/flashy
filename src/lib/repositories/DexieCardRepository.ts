@@ -68,6 +68,7 @@ export class DexieCardRepository implements CardRepository {
         | "alternateAnswers"
         | "answerJustifications"
         | "labels"
+        | "keyPoints"
         | "scheduling"
       >
     >,

@@ -68,6 +68,16 @@ export interface Card {
   answerJustifications?: Record<string, string>;
   /** User-defined tags.  Stored as a string array; maps to text[] in Postgres. */
   labels: string[];
+  /**
+   * Rubric for a "concept card" — a long-form interview-style question
+   * ("Explain how the event loop works") whose answer is graded against a
+   * checklist rather than short-answer similarity. A card IS a concept card
+   * exactly when keyPoints is non-empty; there is no separate discriminator
+   * (mirrors the hasCodeFence detection convention in
+   * src/lib/content/markdown.ts). Optional/additive — cards synced before
+   * this existed simply have an empty list.
+   */
+  keyPoints?: string[];
   createdAt: string;
   updatedAt: string;
   scheduling: SchedulingState;
@@ -146,4 +156,17 @@ export interface GradeResult {
    * grader) — used to look up that answer's stored justification, if any.
    * Transient, same lifetime as rationale/similarity. */
   matchedAnswer?: string;
+  /**
+   * Per-key-point coverage for a concept card — from the AI cascade
+   * (ConceptGradeResponse) or folded in locally from the self-grade
+   * checklist so the result screen renders identically either way.
+   * Transient, same lifetime as rationale — never persisted to
+   * TestRunQuestion (outcome stays binary).
+   */
+  coverage?: KeyPointCoverage[];
+}
+
+export interface KeyPointCoverage {
+  point: string;
+  covered: boolean;
 }

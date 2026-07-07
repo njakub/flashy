@@ -9,9 +9,19 @@ export interface GradeRequestBody {
   question: string;
   acceptedAnswers: string[];
   userAnswer: string;
+  /** Present + non-empty only for concept cards — a rubric of things a
+   * complete answer should cover; triggers concept-grading mode server-side. */
+  keyPoints?: string[];
+}
+
+export interface KeyPointCoverageWire {
+  point: string;
+  covered: boolean;
 }
 
 export interface GradeResponseBody {
   outcome: "correct" | "incorrect";
   rationale: string;
+  /** Present only when the request carried keyPoints. */
+  coverage?: KeyPointCoverageWire[];
 }

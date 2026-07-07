@@ -18,7 +18,18 @@ describe("CodeAwareGrader — non-code cards", () => {
       "capital of France?",
       ["Paris"],
       "paris",
+      undefined,
     );
+  });
+
+  it("forwards keyPoints to the inner grader unchanged", async () => {
+    const inner = fakeInner({ outcome: "ambiguous" });
+    const grader = new CodeAwareGrader(inner);
+    await grader.grade("q", ["a"], "b", ["point 1", "point 2"]);
+    expect(inner.grade).toHaveBeenCalledWith("q", ["a"], "b", [
+      "point 1",
+      "point 2",
+    ]);
   });
 });
 

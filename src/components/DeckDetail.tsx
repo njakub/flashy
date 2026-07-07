@@ -13,6 +13,7 @@ import {
   sanitizeFilename,
 } from "@/lib/importExport";
 import { FLAGGED_LABEL } from "@/lib/constants";
+import { isConceptCard } from "@/lib/content/concept";
 import { previewText } from "@/lib/content/markdown";
 import type { Deck, Card, CardStats } from "@/lib/types";
 
@@ -150,6 +151,7 @@ export function DeckDetail({ deckId }: Props) {
         back: pc.back,
         alternateAnswers: pc.alternateAnswers,
         labels: pc.labels,
+        keyPoints: pc.keyPoints,
         scheduling: DEFAULT_SCHEDULING_STATE(),
       });
       imported++;
@@ -325,9 +327,10 @@ export function DeckDetail({ deckId }: Props) {
           />
         </div>
         <p className="text-micro text-ink-3">
-          Import formats: JSON export, CSV (front,back,alternates,labels —
-          &ldquo;;&rdquo; separates multiple alternates/labels), or plain
-          text (one card per line, front | back).
+          Import formats: JSON export, CSV
+          (front,back,alternates,labels,keypoints — &ldquo;;&rdquo; separates
+          multiple alternates/labels/keypoints), or plain text (one card per
+          line, front | back).
         </p>
       </div>
 
@@ -396,8 +399,13 @@ export function DeckDetail({ deckId }: Props) {
                   <p className="text-body text-ink-1 truncate">
                     {previewText(card.front)}
                   </p>
-                  {(card.labels ?? []).length > 0 && (
+                  {(isConceptCard(card) || (card.labels ?? []).length > 0) && (
                     <div className="flex flex-wrap gap-1.5 mt-2">
+                      {isConceptCard(card) && (
+                        <span className="text-micro rounded-chip bg-accent-soft text-accent-hi px-2.5 py-1">
+                          Concept · {(card.keyPoints ?? []).length}
+                        </span>
+                      )}
                       {(card.labels ?? []).map((l) => (
                         <span
                           key={l}

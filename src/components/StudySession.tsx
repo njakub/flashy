@@ -6,6 +6,7 @@ import { useRepositories } from "@/components/providers/RepositoryProvider";
 import { scheduler } from "@/lib/scheduler";
 import { distinctLabels } from "@/lib/testHistory";
 import { FLAGGED_LABEL } from "@/lib/constants";
+import { isConceptCard } from "@/lib/content/concept";
 import { LabelChips } from "@/components/LabelChips";
 import { CardContent } from "@/components/CardContent";
 import { SpeakButton } from "@/components/SpeakButton";
@@ -259,6 +260,24 @@ export function StudySession({ deckId }: Props) {
                   />
                   <SpeakButton text={current?.back ?? ""} className="mt-1.5" />
                 </div>
+                {isConceptCard(current ?? { keyPoints: [] }) && (
+                  <div className="space-y-1.5">
+                    <p className="text-micro text-ink-3 uppercase tracking-wide">
+                      Key points
+                    </p>
+                    <ul className="space-y-1">
+                      {(current?.keyPoints ?? []).map((point, i) => (
+                        <li
+                          key={i}
+                          className="text-meta text-ink-2 flex items-start gap-1.5"
+                        >
+                          <span className="text-correct">✓</span>
+                          <span>{point}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </>
             )}
           </div>

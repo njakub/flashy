@@ -12,11 +12,13 @@ import {
 } from "@/lib/grading/EmbeddingGrader";
 import { LlmGrader } from "@/lib/grading/LlmGrader";
 import { CodeAwareGrader } from "@/lib/grading/CodeAwareGrader";
+import { ConceptAwareGrader } from "@/lib/grading/ConceptAwareGrader";
 import { useThresholdPrefs } from "@/lib/grading/useThresholdPrefs";
 import type { Grader } from "@/lib/grading/Grader";
 import { FLAGGED_LABEL, randomSuccessMessage } from "@/lib/constants";
 import { distinctLabels } from "@/lib/testHistory";
 import { hasCodeFence } from "@/lib/content/markdown";
+import { isConceptCard } from "@/lib/content/concept";
 import { LabelChips } from "@/components/LabelChips";
 import { CardContent } from "@/components/CardContent";
 import { SpeakButton } from "@/components/SpeakButton";
@@ -82,6 +84,26 @@ function withSuccessMessage(card: Card, result: GradeResult): GradeResult {
   return { ...result, rationale: stored || randomSuccessMessage() };
 }
 
+/**
+ * Voice input runs an on-device Whisper model through onnxruntime-web's WASM
+ * backend. On some mobile browsers (notably Android Firefox) that backend
+ * can't build an inference session for the quantized model and throws a raw
+ * ONNX graph dump ("Can't create a session … TransposeDQWeightsForMatMulNBits
+ * Missing required scale …"). That's meaningless to a user, so collapse any
+ * session-creation failure into a plain explanation; other errors (e.g. a
+ * denied mic permission) pass through unchanged.
+ */
+function friendlyMicError(raw: string): string {
+  if (
+    /can't create a session|MatMulNBits|DequantizeLinear|InferenceSession|no available backend/i.test(
+      raw,
+    )
+  ) {
+    return "Voice input isn't supported in this browser — the on-device speech model couldn't load here. Try Chrome, or type your answer instead.";
+  }
+  return raw;
+}
+
 export function TestSession({ deckId }: Props) {
   const { cards, testRuns } = useRepositories();
   const { ownerId, status, getAccessToken } = useAuth();
@@ -100,8 +122,13 @@ export function TestSession({ deckId }: Props) {
   // so a fenced-code card short-circuits straight to normalized exact-match
   // or self-grade, never trusting a single embedding score to fail it. Only
   // wraps the local grader — the LLM cascade below is already competent at
-  // code equivalence.
-  const localGrader = useRef<Grader>(new CodeAwareGrader(embeddingGrader.current));
+  // code equivalence. ConceptAwareGrader wraps OUTERMOST: a concept card
+  // (long-form, graded against a key-points rubric) always defers to
+  // self-grade/AI rather than either heuristic, even if its answer happens
+  // to contain a code fence.
+  const localGrader = useRef<Grader>(
+    new ConceptAwareGrader(new CodeAwareGrader(embeddingGrader.current)),
+  );
   const llmGrader = useRef(new LlmGrader(getAccessToken));
   // Snapshot of the account's grading preference for the run in progress —
   // set once when a quiz starts, not read live, so a preference change on
@@ -153,14 +180,22 @@ export function TestSession({ deckId }: Props) {
       try {
         await transcriber.start();
       } catch (err) {
-        setMicError(err instanceof Error ? err.message : "Microphone access failed.");
+        setMicError(
+          friendlyMicError(
+            err instanceof Error ? err.message : "Microphone access failed.",
+          ),
+        );
       }
     } else if (transcriber.state === "recording") {
       try {
         const text = await transcriber.stop();
         if (text) setUserAnswer(text);
       } catch (err) {
-        setMicError(err instanceof Error ? err.message : "Transcription failed.");
+        setMicError(
+          friendlyMicError(
+            err instanceof Error ? err.message : "Transcription failed.",
+          ),
+        );
       }
     }
   }
@@ -174,6 +209,10 @@ export function TestSession({ deckId }: Props) {
   const [addingAlternate, setAddingAlternate] = useState(false);
   const [alternateInput, setAlternateInput] = useState("");
   const [alternateSaving, setAlternateSaving] = useState(false);
+
+  // Concept-card self-grade checklist — transient, index-aligned with
+  // current.keyPoints. Reset between questions/runs in advance()/startTest().
+  const [checkedPoints, setCheckedPoints] = useState<boolean[]>([]);
 
   const labelOptions = distinctLabels(pool);
   const filteredPool =
@@ -196,6 +235,8 @@ export function TestSession({ deckId }: Props) {
     setGradeResult(null);
     setReviewed(0);
     setCorrect(0);
+    setCheckedPoints([]);
+    setMicError(null);
     questionLog.current = [];
     runStartedAt.current = new Date().toISOString();
     setSessionGradingMode(gradingDefault);
@@ -270,7 +311,14 @@ export function TestSession({ deckId }: Props) {
    */
   async function resolveGrade(result: GradeResult, source: "local" | "ai") {
     if (!current) return;
-    if (source === "ai" && result.outcome === "correct") {
+    // Never auto-accept a whole long-form paragraph as a card "alternate
+    // answer" — that affordance only makes sense for short accepted-answer
+    // cards.
+    if (
+      source === "ai" &&
+      result.outcome === "correct" &&
+      !isConceptCard(current)
+    ) {
       await addAcceptedAnswer(userAnswer.trim(), result.rationale);
     }
     const finalResult = withSuccessMessage(current, result);
@@ -295,6 +343,7 @@ export function TestSession({ deckId }: Props) {
         current.front,
         acceptedAnswers(current),
         answer,
+        current.keyPoints,
       );
       if (result.outcome === "ambiguous") {
         setGradeResult(result);
@@ -343,6 +392,7 @@ export function TestSession({ deckId }: Props) {
         current.front,
         acceptedAnswers(current),
         answer,
+        current.keyPoints,
       );
     } catch (err) {
       console.error("EmbeddingGrader error (cascade):", err);
@@ -364,6 +414,7 @@ export function TestSession({ deckId }: Props) {
         current.front,
         acceptedAnswers(current),
         answer,
+        current.keyPoints,
       );
       if (aiResult.outcome === "ambiguous") {
         setGradeResult(aiResult);
@@ -420,6 +471,17 @@ export function TestSession({ deckId }: Props) {
       const updated: GradeResult = {
         ...r,
         outcome: isCorrect ? "correct" : "incorrect",
+        // Fold the self-grade checklist into the same coverage shape the AI
+        // cascade produces, so the result screen renders identically either
+        // way.
+        ...(current && isConceptCard(current)
+          ? {
+              coverage: (current.keyPoints ?? []).map((point, i) => ({
+                point,
+                covered: checkedPoints[i] ?? false,
+              })),
+            }
+          : {}),
       };
       return current ? withSuccessMessage(current, updated) : updated;
     });
@@ -455,6 +517,8 @@ export function TestSession({ deckId }: Props) {
     // Reset "add alternate" state between questions.
     setAddingAlternate(false);
     setAlternateInput("");
+    setCheckedPoints([]);
+    setMicError(null); // a mic error from this card shouldn't linger onto the next
     const next = currentIndex + 1;
     if (next >= queue.length) {
       finishRun();
@@ -738,7 +802,17 @@ export function TestSession({ deckId }: Props) {
               </p>
             )}
             {micError && (
-              <p className="text-micro text-incorrect text-center">{micError}</p>
+              <div className="flex items-start gap-2 rounded-control border border-incorrect-soft bg-incorrect-soft px-3 py-2">
+                <p className="flex-1 text-micro text-incorrect">{micError}</p>
+                <button
+                  type="button"
+                  onClick={() => setMicError(null)}
+                  aria-label="Dismiss error"
+                  className="shrink-0 text-incorrect opacity-70 hover:opacity-100 leading-none"
+                >
+                  ✕
+                </button>
+              </div>
             )}
 
             {/* AI Grade — manual escalation straight to Claude, skipping the
@@ -799,7 +873,9 @@ export function TestSession({ deckId }: Props) {
             <p className="text-micro text-self-grade font-semibold">
               {gradeError
                 ? "Self-grade (model unavailable)"
-                : "Your call"}
+                : isConceptCard(current)
+                  ? "Tick what you covered, then grade yourself"
+                  : "Your call"}
               {!gradeError && gradeResult?.similarity !== undefined && (
                 <span className="ml-2 font-normal opacity-80">
                   (similarity: {(gradeResult.similarity * 100).toFixed(0)}%)
@@ -810,13 +886,52 @@ export function TestSession({ deckId }: Props) {
             <p className="text-meta text-ink-2">
               You wrote <b className="text-ink-1 font-semibold">{userAnswer}</b>
             </p>
-            <p className="text-meta text-ink-2 flex items-center gap-1.5">
-              <span>
-                Accepted{" "}
-                <b className="text-ink-1 font-semibold">{current.back}</b>
-              </span>
-              <SpeakButton text={current.back} />
-            </p>
+            {hasCodeFence(current.back) || isConceptCard(current) ? (
+              <div className="text-meta text-ink-2">
+                <div className="flex items-center gap-1.5">
+                  <span>Accepted</span>
+                  <SpeakButton text={current.back} />
+                </div>
+                <CardContent text={current.back} className="text-ink-1 font-semibold" />
+              </div>
+            ) : (
+              <p className="text-meta text-ink-2 flex items-center gap-1.5">
+                <span>
+                  Accepted{" "}
+                  <b className="text-ink-1 font-semibold">{current.back}</b>
+                </span>
+                <SpeakButton text={current.back} />
+              </p>
+            )}
+
+            {isConceptCard(current) && (
+              <div className="space-y-2 rounded-control bg-surface-1 border border-line-2 p-3">
+                <p className="text-micro text-ink-3">
+                  Covered {checkedPoints.filter(Boolean).length} of{" "}
+                  {(current.keyPoints ?? []).length} key points
+                </p>
+                <div className="space-y-1.5">
+                  {(current.keyPoints ?? []).map((point, i) => (
+                    <label
+                      key={i}
+                      className="flex items-start gap-2 text-meta text-ink-2 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={checkedPoints[i] ?? false}
+                        onChange={(e) => {
+                          const next = [...checkedPoints];
+                          next[i] = e.target.checked;
+                          setCheckedPoints(next);
+                        }}
+                        className="mt-0.5"
+                      />
+                      <span>{point}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="flex gap-2.5">
               <button
@@ -847,47 +962,50 @@ export function TestSession({ deckId }: Props) {
               </button>
             )}
 
-            {/* Add alternate answer affordance — optional, never blocking */}
-            {!addingAlternate ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setAddingAlternate(true);
-                  setAlternateInput(userAnswer);
-                }}
-                className="w-full text-meta text-accent-hi border border-dashed border-line-2 rounded-control px-3 py-2.5 hover:bg-surface-2 transition-colors"
-              >
-                Accept &ldquo;{userAnswer}&rdquo; for this card
-              </button>
-            ) : (
-              <div className="flex gap-2 items-center">
-                <input
-                  type="text"
-                  value={alternateInput}
-                  onChange={(e) => setAlternateInput(e.target.value)}
-                  placeholder="Alternate accepted phrasing…"
-                  className="flex-1 rounded-control bg-surface-1 border border-line-2 px-3 py-2 text-meta text-ink-1 focus:outline-none focus:ring-2 focus:ring-accent"
-                />
-                <button
-                  type="button"
-                  onClick={handleSaveAlternate}
-                  disabled={!alternateInput.trim() || alternateSaving}
-                  className="text-micro rounded-control bg-accent text-on-accent px-3 py-2 hover:opacity-90 disabled:opacity-50 transition-opacity"
-                >
-                  {alternateSaving ? "Saving…" : "Save"}
-                </button>
+            {/* Add alternate answer affordance — optional, never blocking.
+             * Hidden for concept cards: a whole paragraph shouldn't become
+             * an "alternate answer" on the card. */}
+            {!isConceptCard(current) &&
+              (!addingAlternate ? (
                 <button
                   type="button"
                   onClick={() => {
-                    setAddingAlternate(false);
-                    setAlternateInput("");
+                    setAddingAlternate(true);
+                    setAlternateInput(userAnswer);
                   }}
-                  className="text-micro text-ink-3 hover:text-ink-1 transition-colors"
+                  className="w-full text-meta text-accent-hi border border-dashed border-line-2 rounded-control px-3 py-2.5 hover:bg-surface-2 transition-colors"
                 >
-                  Cancel
+                  Accept &ldquo;{userAnswer}&rdquo; for this card
                 </button>
-              </div>
-            )}
+              ) : (
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    value={alternateInput}
+                    onChange={(e) => setAlternateInput(e.target.value)}
+                    placeholder="Alternate accepted phrasing…"
+                    className="flex-1 rounded-control bg-surface-1 border border-line-2 px-3 py-2 text-meta text-ink-1 focus:outline-none focus:ring-2 focus:ring-accent"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSaveAlternate}
+                    disabled={!alternateInput.trim() || alternateSaving}
+                    className="text-micro rounded-control bg-accent text-on-accent px-3 py-2 hover:opacity-90 disabled:opacity-50 transition-opacity"
+                  >
+                    {alternateSaving ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAddingAlternate(false);
+                      setAlternateInput("");
+                    }}
+                    className="text-micro text-ink-3 hover:text-ink-1 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ))}
           </div>
         </div>
       )}
@@ -944,7 +1062,7 @@ export function TestSession({ deckId }: Props) {
             <p className="text-meta text-ink-2">
               You wrote <b className="text-ink-1 font-semibold">{userAnswer}</b>
             </p>
-            {hasCodeFence(current.back) ? (
+            {hasCodeFence(current.back) || isConceptCard(current) ? (
               <div className="text-meta text-ink-2">
                 <div className="flex items-center gap-1.5">
                   <span>Answer</span>
@@ -966,8 +1084,36 @@ export function TestSession({ deckId }: Props) {
               </p>
             )}
 
-            {/* Add alternate answer — only shown on incorrect results */}
+            {gradeResult.coverage && gradeResult.coverage.length > 0 && (
+              <div className="space-y-1.5 rounded-control bg-surface-1 border border-line-2 p-3">
+                <p className="text-micro text-ink-3">
+                  Covered{" "}
+                  {gradeResult.coverage.filter((c) => c.covered).length} of{" "}
+                  {gradeResult.coverage.length} key points
+                </p>
+                <ul className="space-y-1">
+                  {gradeResult.coverage.map((c, i) => (
+                    <li
+                      key={i}
+                      className={`text-meta flex items-start gap-1.5 ${
+                        c.covered ? "text-ink-2" : "text-incorrect font-medium"
+                      }`}
+                    >
+                      <span className={c.covered ? "text-correct" : "text-incorrect"}>
+                        {c.covered ? "✓" : "✕"}
+                      </span>
+                      <span>{c.point}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {/* Add alternate answer — only shown on incorrect results, and
+             * never for concept cards (a whole paragraph shouldn't become
+             * an "alternate answer"). */}
             {gradeResult.outcome === "incorrect" &&
+              !isConceptCard(current) &&
               (!addingAlternate ? (
                 <button
                   type="button"

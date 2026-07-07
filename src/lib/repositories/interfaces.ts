@@ -50,6 +50,7 @@ export interface CardRepository {
         | "alternateAnswers"
         | "answerJustifications"
         | "labels"
+        | "keyPoints"
         | "scheduling"
       >
     >,

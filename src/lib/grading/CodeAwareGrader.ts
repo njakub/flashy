@@ -30,11 +30,12 @@ export class CodeAwareGrader implements Grader {
     cardFront: string,
     correctAnswers: string[],
     userAnswer: string,
+    keyPoints?: string[],
   ): Promise<GradeResult> {
     const isCodeCard =
       correctAnswers.some(hasCodeFence) || hasCodeFence(userAnswer);
     if (!isCodeCard) {
-      return this.inner.grade(cardFront, correctAnswers, userAnswer);
+      return this.inner.grade(cardFront, correctAnswers, userAnswer, keyPoints);
     }
 
     const userCode = normalizeCode(codeContent(userAnswer));

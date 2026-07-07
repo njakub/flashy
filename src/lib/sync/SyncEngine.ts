@@ -154,6 +154,13 @@ function toWireCardPush(c: StoredCard) {
     alternateAnswers: c.alternateAnswers,
     answerJustifications: c.answerJustifications,
     labels: c.labels,
+    // Always present (unlike answerJustifications) so an explicit [] can
+    // legitimately clear key points server-side — an old client that never
+    // populates this field simply won't reach this line at all, since it
+    // won't have this code. See SyncEngine.applyCard / the server's
+    // SyncService.applyCard for the absent-vs-empty-array distinction this
+    // depends on.
+    keyPoints: c.keyPoints ?? [],
     createdAt: c.createdAt,
     updatedAt: c.updatedAt,
     deletedAt: c.deletedAt,
@@ -231,6 +238,7 @@ export async function applyCard(wire: WireCard): Promise<void> {
       alternateAnswers: wire.alternateAnswers,
       answerJustifications: wire.answerJustifications,
       labels: wire.labels,
+      keyPoints: wire.keyPoints ?? [],
       createdAt: wire.createdAt,
       updatedAt: wire.updatedAt,
       deletedAt: wire.deletedAt,
@@ -266,6 +274,13 @@ export async function applyCard(wire: WireCard): Promise<void> {
       ? local.answerJustifications
       : wire.answerJustifications,
     labels: contentStale ? local.labels : wire.labels,
+    // Joins the content group. wire.keyPoints is optional in this client's
+    // WireCard mirror only to tolerate a not-yet-deployed server during
+    // rollout (the current server always sends it) — falling back to
+    // local.keyPoints in that case is "leave unchanged", never a clear.
+    keyPoints: contentStale
+      ? local.keyPoints
+      : (wire.keyPoints ?? local.keyPoints ?? []),
     updatedAt: contentStale ? local.updatedAt : wire.updatedAt,
     deletedAt: contentStale ? local.deletedAt : wire.deletedAt,
     scheduling: schedulingStale ? local.scheduling : wire.scheduling,

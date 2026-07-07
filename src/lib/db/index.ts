@@ -52,6 +52,11 @@ export function defaultSyncCursor(): Omit<SyncCursorRow, "id"> {
  *         adds the syncState cursor table. Repositories stay the same
  *         (CardRepository/DeckRepository/TestRunRepository are unchanged);
  *         only the Dexie implementations and SyncEngine read the new fields.
+ *
+ * No version bump needed for Card.keyPoints (concept cards) or the earlier
+ * Card.answerJustifications — both are non-indexed optional properties, and
+ * Dexie's .stores() strings only declare indexes, so schemaless fields like
+ * these need no .version()/.upgrade() at all.
  */
 class FlashyDB extends Dexie {
   cards!: Table<StoredCard, string>;

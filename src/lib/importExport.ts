@@ -14,6 +14,10 @@ export interface ExportedCard {
   back: string;
   alternateAnswers: string[];
   labels: string[];
+  /** Rubric for a concept card — non-empty means "concept card". Additive;
+   * defaults to [] on both export and import so pre-feature files/apps
+   * round-trip fine (see Card.keyPoints in src/lib/types.ts). */
+  keyPoints: string[];
 }
 
 export interface ExportFile {
@@ -33,6 +37,7 @@ export function buildExportFile(deckName: string, cards: Card[]): ExportFile {
       back: c.back,
       alternateAnswers: c.alternateAnswers,
       labels: c.labels,
+      keyPoints: c.keyPoints ?? [],
     })),
   };
 }
@@ -117,12 +122,21 @@ export function parseImportFile(raw: string): ImportParseOutcome {
       errors.push({ index, reason: '"labels" must be an array of strings.' });
       return;
     }
+    const keyPoints = e.keyPoints ?? [];
+    if (!isStringArray(keyPoints)) {
+      errors.push({
+        index,
+        reason: '"keyPoints" must be an array of strings.',
+      });
+      return;
+    }
 
     cards.push({
       front: e.front.trim(),
       back: e.back.trim(),
       alternateAnswers,
       labels,
+      keyPoints,
     });
   });
 
@@ -164,7 +178,7 @@ export function parsePlainText(raw: string): ImportParseOutcome {
       errors.push({ index, reason: 'Missing "back".' });
       return;
     }
-    cards.push({ front, back, alternateAnswers: [], labels: [] });
+    cards.push({ front, back, alternateAnswers: [], labels: [], keyPoints: [] });
   });
 
   if (!sawAnyContent) {
@@ -206,9 +220,10 @@ function parseCsvLine(line: string): string[] {
 }
 
 /**
- * CSV import: front,back,alternates,labels — alternates/labels are each a
- * single field with ";"-separated entries. An optional header row
- * ("front,back,...") is detected and skipped.
+ * CSV import: front,back,alternates,labels,keypoints — alternates/labels/
+ * keypoints are each a single field with ";"-separated entries; keypoints
+ * is optional (a 4-column file with no 5th column is still valid). An
+ * optional header row ("front,back,...") is detected and skipped.
  */
 export function parseCsv(raw: string): ImportParseOutcome {
   const lines = raw.split(/\r?\n/);
@@ -232,7 +247,8 @@ export function parseCsv(raw: string): ImportParseOutcome {
       }
     }
 
-    const [front = "", back = "", altsRaw = "", labelsRaw = ""] = fields;
+    const [front = "", back = "", altsRaw = "", labelsRaw = "", keyPointsRaw = ""] =
+      fields;
     if (!front) {
       errors.push({ index, reason: 'Missing "front".' });
       return;
@@ -249,7 +265,11 @@ export function parseCsv(raw: string): ImportParseOutcome {
       .split(";")
       .map((s) => s.trim())
       .filter(Boolean);
-    cards.push({ front, back, alternateAnswers, labels });
+    const keyPoints = keyPointsRaw
+      .split(";")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    cards.push({ front, back, alternateAnswers, labels, keyPoints });
   });
 
   if (!sawAnyContent) {
