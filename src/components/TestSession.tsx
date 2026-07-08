@@ -407,7 +407,8 @@ export function TestSession({ deckId }: Props) {
     }
 
     // Ambiguous, outright "incorrect", or the embedding grader itself
-    // failed — escalate to Claude rather than trust a single local score.
+    // failed — escalate to the configured AI grader rather than trust a
+    // single local score.
     setActiveGrader("ai");
     try {
       const aiResult = await llmGrader.current.grade(
@@ -415,6 +416,7 @@ export function TestSession({ deckId }: Props) {
         acceptedAnswers(current),
         answer,
         current.keyPoints,
+        { outcome: embeddingResult?.outcome ?? "error", similarity: embeddingResult?.similarity },
       );
       if (aiResult.outcome === "ambiguous") {
         setGradeResult(aiResult);
@@ -464,6 +466,15 @@ export function TestSession({ deckId }: Props) {
   }
 
   async function handleSelfGrade(isCorrect: boolean) {
+    // Only send feedback when the ambiguous verdict being resolved came
+    // from the AI grader (it's the only source that stamps a usageId) —
+    // the local grader's own ambiguous results have nothing to grade.
+    if (gradeResult?.usageId) {
+      void llmGrader.current.sendFeedback(
+        gradeResult.usageId,
+        isCorrect ? "correct" : "incorrect",
+      );
+    }
     await persistGrade(isCorrect, gradeResult?.similarity);
     setPhase("result");
     setGradeResult((r) => {
@@ -562,12 +573,19 @@ export function TestSession({ deckId }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
-  /** Save a new alternate answer to the current card immediately. */
+  /**
+   * Save a new alternate answer to the current card immediately. When this
+   * follows an AI "incorrect" verdict, it's the user overriding that
+   * verdict — record it as grading feedback (best-effort, fire-and-forget).
+   */
   async function handleSaveAlternate() {
     const alt = alternateInput.trim();
     if (!alt) return;
     setAlternateSaving(true);
     await addAcceptedAnswer(alt);
+    if (gradeResult?.usageId && gradeResult.outcome === "incorrect") {
+      void llmGrader.current.sendFeedback(gradeResult.usageId, "correct");
+    }
     setAlternateInput("");
     setAddingAlternate(false);
     setAlternateSaving(false);

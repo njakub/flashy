@@ -34,6 +34,19 @@
   --t-self-grade-soft: rgba(185, 131, 47, 0.13);
   --t-on-accent: #ffffff;
   --t-on-semantic: #0f1218;
+  /* Categorical series colors for the usage dashboard's per-model charts —
+   * fixed hue order, assigned by each model's index in the flashy-api
+   * registry response (never by rank/cost), so a given model keeps the same
+   * color across chart types and refetches. Validated via the dataviz
+   * skill's validate_palette.js (lightness band, chroma floor, CVD
+   * adjacent-pair separation, contrast vs. surface) for both color schemes.
+   * --t-chart-other is the overflow bucket beyond 5 distinct models. */
+  --t-chart-1: #4d5fe0;
+  --t-chart-2: #0d9488;
+  --t-chart-3: #a3591a;
+  --t-chart-4: #a13f80;
+  --t-chart-5: #6b45a3;
+  --t-chart-other: #8b94a3;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -56,6 +69,12 @@
     --t-incorrect-soft: rgba(227, 123, 112, 0.15);
     --t-self-grade: #d3a45c;
     --t-self-grade-soft: rgba(211, 164, 92, 0.15);
+    --t-chart-1: #6879f0;
+    --t-chart-2: #1fa8a3;
+    --t-chart-3: #c97a35;
+    --t-chart-4: #c65aa0;
+    --t-chart-5: #9268c9;
+    --t-chart-other: #68717f;
   }
 }
 
@@ -83,6 +102,12 @@
   --color-self-grade-soft: var(--t-self-grade-soft);
   --color-on-accent: var(--t-on-accent);
   --color-on-semantic: var(--t-on-semantic);
+  --color-chart-1: var(--t-chart-1);
+  --color-chart-2: var(--t-chart-2);
+  --color-chart-3: var(--t-chart-3);
+  --color-chart-4: var(--t-chart-4);
+  --color-chart-5: var(--t-chart-5);
+  --color-chart-other: var(--t-chart-other);
 
   /* Named by usage, not a generic scale — see src/lib/theme.ts `radius`. */
   --radius-chip: 8px;

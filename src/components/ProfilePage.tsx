@@ -5,10 +5,16 @@ import Link from "next/link";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { useSettings } from "@/components/providers/SettingsProvider";
 import { UserClient } from "@/lib/settings/UserClient";
+import { useModelsCatalog } from "@/lib/settings/useModelsCatalog";
 import { useSpeechPrefs } from "@/lib/speech/useSpeechPrefs";
 import { useThresholdPrefs } from "@/lib/grading/useThresholdPrefs";
 import { THRESHOLD_PRESETS } from "@/lib/grading/thresholdPresets";
-import type { GradingDefault } from "@/lib/settings/wire";
+import type { GradingDefault, ModelInfoWire } from "@/lib/settings/wire";
+
+function formatPriceHint(model: ModelInfoWire): string {
+  const fmt = (n: number) => (n < 1 ? n.toFixed(2) : n.toFixed(0));
+  return `$${fmt(model.inputPerMTok)} in / $${fmt(model.outputPerMTok)} out per 1M`;
+}
 
 const GRADING_OPTIONS: { value: GradingDefault; label: string }[] = [
   { value: "local", label: "Local" },
@@ -17,10 +23,21 @@ const GRADING_OPTIONS: { value: GradingDefault; label: string }[] = [
 
 export function ProfilePage() {
   const { status, user, getAccessToken, logout } = useAuth();
-  const { gradingDefault, setGradingDefault } = useSettings();
+  const {
+    gradingDefault,
+    setGradingDefault,
+    gradingModel,
+    setGradingModel,
+    generationModel,
+    setGenerationModel,
+  } = useSettings();
   const { showSpeakButtons, setShowSpeakButtons } = useSpeechPrefs();
   const { preset: thresholdPreset, setPresetKey } = useThresholdPrefs();
+  const { models } = useModelsCatalog();
   const isSignedIn = status === "signedIn";
+
+  const gradingModelOptions = models.filter((m) => m.tasks.includes("grading"));
+  const generationModelOptions = models.filter((m) => m.tasks.includes("generation"));
 
   const [signInMethods, setSignInMethods] = useState<{
     hasPassword: boolean;
@@ -128,6 +145,55 @@ export function ProfilePage() {
             );
           })}
         </div>
+      </div>
+
+      <div className="rounded-card border border-line bg-surface-1 p-6 space-y-4">
+        <div>
+          <p className="text-micro text-ink-3 uppercase tracking-wide">
+            AI models
+          </p>
+          <p className="text-meta text-ink-2 mt-1">
+            Choose which model handles each AI task. Pricing shown is per
+            provider, before any context-caching discount.
+          </p>
+        </div>
+        <label className="block space-y-1">
+          <span className="text-meta text-ink-2">Grade answers with</span>
+          <select
+            value={gradingModel}
+            onChange={(e) => setGradingModel(e.target.value)}
+            disabled={!isSignedIn}
+            className="w-full rounded-control border border-line-2 bg-surface-2 text-ink-1 px-3 py-2.5 text-body disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {gradingModelOptions.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.displayName} — {formatPriceHint(m)}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="block space-y-1">
+          <span className="text-meta text-ink-2">Generate questions with</span>
+          <select
+            value={generationModel}
+            onChange={(e) => setGenerationModel(e.target.value)}
+            disabled={!isSignedIn}
+            className="w-full rounded-control border border-line-2 bg-surface-2 text-ink-1 px-3 py-2.5 text-body disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {generationModelOptions.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.displayName} — {formatPriceHint(m)}
+                {!m.supportsPdf ? " · no PDF" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <Link
+          href="/profile/usage"
+          className="inline-block text-meta text-accent-hi hover:underline"
+        >
+          Usage &amp; costs →
+        </Link>
       </div>
 
       <div className="rounded-card border border-line bg-surface-1 p-6 space-y-3">

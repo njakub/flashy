@@ -164,6 +164,10 @@ export interface GradeResult {
    * TestRunQuestion (outcome stays binary).
    */
   coverage?: KeyPointCoverage[];
+  /** Present only on results produced by LlmGrader — the LlmUsage row id,
+   * echoed back via POST /grade/feedback if the user confirms or overrides
+   * this verdict. Transient, same lifetime as rationale. */
+  usageId?: string;
 }
 
 export interface KeyPointCoverage {
