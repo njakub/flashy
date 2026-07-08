@@ -4,9 +4,10 @@ import type { ProfileResponseBody, UpdateProfileRequestBody } from "./wire";
 /** Same shape as SyncEngine's / LlmGrader's AccessTokenGetter. */
 export type AccessTokenGetter = () => Promise<string | null>;
 
-async function authedFetch<T>(
+/** Shared JWT-authed JSON fetch against flashy-api — also used by GenerateClient. */
+export async function authedFetch<T>(
   path: string,
-  method: "GET" | "PATCH",
+  method: "GET" | "PATCH" | "POST",
   getAccessToken: AccessTokenGetter,
   body?: unknown,
 ): Promise<T> {

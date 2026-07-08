@@ -23,7 +23,8 @@ interface Props {
 
 export function DeckDetail({ deckId }: Props) {
   const { decks, cards, testRuns } = useRepositories();
-  const { ownerId } = useAuth();
+  const { ownerId, status } = useAuth();
+  const isSignedIn = status === "signedIn";
   const router = useRouter();
   const [deck, setDeck] = useState<Deck | null>(null);
   const [cardList, setCardList] = useState<Card[]>([]);
@@ -325,6 +326,18 @@ export function DeckDetail({ deckId }: Props) {
             onChange={handleImportFile}
             className="hidden"
           />
+          <button
+            onClick={() => router.push(`/decks/${deckId}/cards/generate`)}
+            disabled={!isSignedIn}
+            title={
+              isSignedIn
+                ? "Generate flashcards from pasted text, a document, or a PDF"
+                : "Sign in to generate cards"
+            }
+            className="text-micro rounded-chip border border-line text-accent-hi px-3 py-1.5 hover:bg-surface-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+          >
+            ✨ Generate with AI
+          </button>
         </div>
         <p className="text-micro text-ink-3">
           Import formats: JSON export, CSV
