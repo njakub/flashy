@@ -98,8 +98,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setStatus("signedOut");
   }, []);
 
-  // Plain function, not a useCallback: it only closes over sessionRef
-  // (always current) and applySession/clearSession (stable, [] deps), so
+  function currentRefreshToken(): string | null {
+    return (
+      sessionRef.current?.refreshToken ??
+      localStorage.getItem(REFRESH_TOKEN_KEY)
+    );
+  }
+
+  // Refresh tokens rotate server-side (each is single-use), so concurrent
+  // refreshes with the same token would make all but the first 401 and sign
+  // the user out. Every caller shares this one in-flight promise instead.
+  const refreshInFlightRef = useRef<Promise<Session | null> | null>(null);
+
+  // Resolves to the applied session, or null if none was applied. A result
+  // is discarded if the session changed while the request was in flight —
+  // e.g. a slow startup refresh with a stale token must not clobber (or,
+  // on failure, clear) a sign-in that completed in the meantime.
+  function refreshSession(refreshToken: string): Promise<Session | null> {
+    if (refreshInFlightRef.current) return refreshInFlightRef.current;
+    const promise = AuthClient.refresh(refreshToken)
+      .then((tokens) => {
+        if (currentRefreshToken() !== refreshToken) return null;
+        applySession(tokens);
+        return tokens;
+      })
+      .catch(() => {
+        if (currentRefreshToken() === refreshToken) clearSession();
+        return null;
+      })
+      .finally(() => {
+        refreshInFlightRef.current = null;
+      });
+    refreshInFlightRef.current = promise;
+    return promise;
+  }
+
+  // Plain function, not a useCallback: it only closes over refs (always
+  // current) and applySession/clearSession (stable, [] deps), so
   // capturing whichever render's copy into the syncEngineRef singleton
   // below never goes stale.
   async function getAccessToken(): Promise<string | null> {
@@ -107,17 +142,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (session && !isExpiringSoon(session.accessToken)) {
       return session.accessToken;
     }
-    const storedRefreshToken =
-      session?.refreshToken ?? localStorage.getItem(REFRESH_TOKEN_KEY);
+    const storedRefreshToken = currentRefreshToken();
     if (!storedRefreshToken) return null;
-    try {
-      const tokens = await AuthClient.refresh(storedRefreshToken);
-      applySession(tokens);
-      return tokens.accessToken;
-    } catch {
-      clearSession();
-      return null;
-    }
+    const refreshed = await refreshSession(storedRefreshToken);
+    // null here may mean a newer sign-in won the race — use it if so.
+    return refreshed?.accessToken ?? sessionRef.current?.accessToken ?? null;
   }
 
   // Ref reads/writes only ever happen inside this callback body (executed
@@ -164,12 +193,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const stored = localStorage.getItem(REFRESH_TOKEN_KEY);
     if (!stored) return; // initial state already accounts for this case
-    AuthClient.refresh(stored)
-      .then(async (tokens) => {
-        applySession(tokens);
-        await bootstrapLocalUserData(tokens.user.id);
-      })
-      .catch(() => clearSession());
+    void refreshSession(stored).then(async (session) => {
+      if (session) await bootstrapLocalUserData(session.user.id);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

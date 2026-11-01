@@ -34,7 +34,10 @@ function LoginForm() {
   }
 
   async function handleGoogleSuccess(idToken: string | undefined) {
-    if (!idToken) return;
+    if (!idToken) {
+      setError("Google sign-in failed: no credential returned.");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
