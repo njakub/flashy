@@ -56,7 +56,10 @@ export function defaultSyncCursor(): Omit<SyncCursorRow, "id"> {
  * No version bump needed for Card.keyPoints (concept cards) or the earlier
  * Card.answerJustifications — both are non-indexed optional properties, and
  * Dexie's .stores() strings only declare indexes, so schemaless fields like
- * these need no .version()/.upgrade() at all.
+ * these need no .version()/.upgrade() at all. Same for Deck.parentId (deck
+ * nesting): not indexed — the tree is built in memory from getAll(ownerId)
+ * — and pre-existing rows simply lack it; DexieDeckRepository normalises
+ * missing -> null on read.
  */
 class FlashyDB extends Dexie {
   cards!: Table<StoredCard, string>;

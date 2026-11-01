@@ -30,6 +30,17 @@ export class DexieCardRepository implements CardRepository {
     return all.filter((c) => notDeleted(c) && c.scheduling.dueAt <= nowIso);
   }
 
+  async getByDecks(deckIds: string[]): Promise<Card[]> {
+    const rows = await db.cards.where("deckId").anyOf(deckIds).toArray();
+    return rows.filter(notDeleted);
+  }
+
+  async getDueCardsInDecks(deckIds: string[], now: Date): Promise<Card[]> {
+    const nowIso = now.toISOString();
+    const rows = await db.cards.where("deckId").anyOf(deckIds).toArray();
+    return rows.filter((c) => notDeleted(c) && c.scheduling.dueAt <= nowIso);
+  }
+
   async getAllByOwner(ownerId: string): Promise<Card[]> {
     const rows = await db.cards.where("ownerId").equals(ownerId).toArray();
     return rows.filter(notDeleted);

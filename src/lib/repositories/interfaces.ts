@@ -19,8 +19,14 @@ export interface DeckRepository {
   getAll(ownerId: string): Promise<Deck[]>;
   getById(id: string): Promise<Deck | undefined>;
   create(deck: Omit<Deck, "id" | "createdAt" | "updatedAt">): Promise<Deck>;
-  update(id: string, patch: Partial<Pick<Deck, "name">>): Promise<Deck>;
-  /** Deleting a deck also deletes all its cards and test history (cascade). */
+  /** Throws if a new parentId would put the deck inside its own subtree,
+   *  or names a deck that doesn't exist. */
+  update(
+    id: string,
+    patch: Partial<Pick<Deck, "name" | "parentId">>,
+  ): Promise<Deck>;
+  /** Deleting a deck also deletes its whole subtree — every descendant
+   *  deck, and all their cards and test history (cascade). */
   delete(id: string): Promise<void>;
 }
 
@@ -35,6 +41,9 @@ export interface DeckRepository {
 export interface CardRepository {
   getByDeck(deckId: string): Promise<Card[]>;
   getDueCards(deckId: string | null, now: Date): Promise<Card[]>;
+  /** Cards across several decks — a deck's subtree for Study/Test. */
+  getByDecks(deckIds: string[]): Promise<Card[]>;
+  getDueCardsInDecks(deckIds: string[], now: Date): Promise<Card[]>;
   /** Every card across every deck this owner has — cross-deck aggregates
    * (e.g. the dashboard streak) only, never a per-deck view. */
   getAllByOwner(ownerId: string): Promise<Card[]>;

@@ -16,6 +16,9 @@ export interface WireDeck {
   id: string;
   ownerId: string;
   name: string;
+  // Optional in this client mirror (unlike the server's required WireDeck)
+  // for the same rollout reason as WireCard.keyPoints below.
+  parentId?: string | null;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;

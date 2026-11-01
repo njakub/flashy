@@ -15,7 +15,20 @@ import {
 import { FLAGGED_LABEL } from "@/lib/constants";
 import { isConceptCard } from "@/lib/content/concept";
 import { previewText } from "@/lib/content/markdown";
+import {
+  ancestors,
+  buildDeckTree,
+  flattenTree,
+  subtreeIds,
+  type DeckNode,
+} from "@/lib/decks/tree";
 import type { Deck, Card, CardStats } from "@/lib/types";
+
+interface SubtreeCounts {
+  decks: number; // descendant decks, excluding this one
+  cards: number; // including this deck's own
+  due: number;
+}
 
 interface Props {
   deckId: string;
@@ -28,7 +41,17 @@ export function DeckDetail({ deckId }: Props) {
   const router = useRouter();
   const [deck, setDeck] = useState<Deck | null>(null);
   const [cardList, setCardList] = useState<Card[]>([]);
-  const [dueCount, setDueCount] = useState(0);
+  const [allDecks, setAllDecks] = useState<Deck[]>([]);
+  const [subtree, setSubtree] = useState<SubtreeCounts>({
+    decks: 0,
+    cards: 0,
+    due: 0,
+  });
+  // Rolled-up card/due counts per child deck, for the sub-decks list.
+  const [childCounts, setChildCounts] = useState<
+    Record<string, { cards: number; due: number }>
+  >({});
+  const [newSubName, setNewSubName] = useState("");
   const [statsMap, setStatsMap] = useState<Map<string, CardStats>>(new Map());
   const [editing, setEditing] = useState(false);
   const [editName, setEditName] = useState("");
@@ -48,8 +71,33 @@ export function DeckDetail({ deckId }: Props) {
     setEditName(d.name);
     const c = await cards.getByDeck(deckId);
     setCardList(c.sort((a, b) => a.createdAt.localeCompare(b.createdAt)));
-    const due = await cards.getDueCards(deckId, new Date());
-    setDueCount(due.length);
+    const now = new Date();
+
+    const everyDeck = await decks.getAll(d.ownerId);
+    setAllDecks(everyDeck);
+    const ids = subtreeIds(everyDeck, deckId);
+    const subtreeCards = await cards.getByDecks(ids);
+    const nowIso = now.toISOString();
+    const isDue = (x: Card) => x.scheduling.dueAt <= nowIso;
+    setSubtree({
+      decks: ids.length - 1,
+      cards: subtreeCards.length,
+      due: subtreeCards.filter(isDue).length,
+    });
+    const node = flattenTree(buildDeckTree(everyDeck)).find(
+      (n) => n.deck.id === deckId,
+    );
+    const perChild: Record<string, { cards: number; due: number }> = {};
+    for (const child of node?.children ?? []) {
+      const childIds = new Set(subtreeIds(everyDeck, child.deck.id));
+      const inChild = subtreeCards.filter((x) => childIds.has(x.deckId));
+      perChild[child.deck.id] = {
+        cards: inChild.length,
+        due: inChild.filter(isDue).length,
+      };
+    }
+    setChildCounts(perChild);
+
     // Single grouped pass — O(history size for this deck).
     const statsList = await testRuns.getStatsByCards(c.map((x) => x.id));
     setStatsMap(new Map(statsList.map((s) => [s.cardId, s])));
@@ -68,6 +116,31 @@ export function DeckDetail({ deckId }: Props) {
       await load();
     } catch {
       setError("Failed to rename deck.");
+    }
+  }
+
+  async function handleAddSubDeck(e: React.FormEvent) {
+    e.preventDefault();
+    const name = newSubName.trim();
+    if (!name || !deck) return;
+    setError(null);
+    try {
+      await decks.create({ name, ownerId, parentId: deck.id });
+      setNewSubName("");
+      await load();
+    } catch {
+      setError("Failed to create sub-deck.");
+    }
+  }
+
+  async function handleMove(parentId: string | null) {
+    if (!deck || parentId === deck.parentId) return;
+    setError(null);
+    try {
+      await decks.update(deck.id, { parentId });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to move deck.");
     }
   }
 
@@ -188,6 +261,15 @@ export function DeckDetail({ deckId }: Props) {
   const flaggedCount = cardList.filter((c) =>
     c.labels.includes(FLAGGED_LABEL),
   ).length;
+  const tree = buildDeckTree(allDecks);
+  const flat = flattenTree(tree);
+  const children: DeckNode[] =
+    flat.find((n) => n.deck.id === deckId)?.children ?? [];
+  const breadcrumb = ancestors(allDecks, deckId);
+  // Anywhere outside this deck's own subtree is a valid new parent.
+  const excluded = new Set(subtreeIds(allDecks, deckId));
+  const moveTargets = flat.filter((n) => !excluded.has(n.deck.id));
+  const currentParent = breadcrumb.at(-1)?.id ?? null;
   const visibleCards = showFlaggedOnly
     ? cardList.filter((c) => c.labels.includes(FLAGGED_LABEL))
     : cardList;
@@ -197,6 +279,21 @@ export function DeckDetail({ deckId }: Props) {
       {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="flex-1">
+          {breadcrumb.length > 0 && (
+            <nav aria-label="Deck path" className="text-meta text-ink-3 mb-1">
+              {breadcrumb.map((a) => (
+                <span key={a.id}>
+                  <Link
+                    href={`/decks/${a.id}`}
+                    className="hover:text-accent-hi transition-colors"
+                  >
+                    {a.name}
+                  </Link>
+                  {" / "}
+                </span>
+              ))}
+            </nav>
+          )}
           {editing ? (
             <form onSubmit={handleRename} className="flex gap-2">
               <input
@@ -229,6 +326,8 @@ export function DeckDetail({ deckId }: Props) {
               <h1 className="text-title tracking-tight">{deck.name}</h1>
               <p className="text-meta text-ink-2 mt-1">
                 {cardList.length} card{cardList.length !== 1 ? "s" : ""}
+                {subtree.decks > 0 &&
+                  ` (${subtree.cards} including sub-decks)`}
                 {avgAccuracy !== null && ` · ${avgAccuracy}% average accuracy`}
               </p>
             </>
@@ -243,6 +342,20 @@ export function DeckDetail({ deckId }: Props) {
             >
               Rename
             </button>
+            <select
+              aria-label="Move deck"
+              value={currentParent ?? ""}
+              onChange={(e) => void handleMove(e.target.value || null)}
+              className="text-micro rounded-chip border border-line-2 bg-surface-1 text-ink-2 px-2 py-1.5 max-w-40"
+            >
+              <option value="">Move to: top level</option>
+              {moveTargets.map((n) => (
+                <option key={n.deck.id} value={n.deck.id}>
+                  {"\u00a0\u00a0".repeat(n.depth)}
+                  {n.deck.name}
+                </option>
+              ))}
+            </select>
             <button
               onClick={() => setConfirmDelete(true)}
               className="text-micro rounded-chip border border-incorrect-soft text-incorrect px-3 py-1.5 hover:bg-incorrect-soft transition-colors"
@@ -257,8 +370,11 @@ export function DeckDetail({ deckId }: Props) {
       {confirmDelete && (
         <div className="rounded-card border border-incorrect-soft bg-incorrect-soft p-4 space-y-3">
           <p className="text-meta text-incorrect font-semibold">
-            Delete &ldquo;{deck.name}&rdquo; and all {cardList.length} card
-            {cardList.length !== 1 ? "s" : ""}? This cannot be undone.
+            Delete &ldquo;{deck.name}&rdquo;
+            {subtree.decks > 0 &&
+              `, its ${subtree.decks} sub-deck${subtree.decks !== 1 ? "s" : ""}`}{" "}
+            and all {subtree.cards} card{subtree.cards !== 1 ? "s" : ""} with
+            their test history? This cannot be undone.
           </p>
           <div className="flex gap-2">
             <button
@@ -286,7 +402,7 @@ export function DeckDetail({ deckId }: Props) {
           href={`/decks/${deckId}/study`}
           className="flex-[1.5] text-center text-button rounded-control bg-accent text-on-accent px-4 py-3 hover:opacity-90 transition-opacity"
         >
-          Study · {dueCount} due
+          Study · {subtree.due} due
         </Link>
         <Link
           href={`/decks/${deckId}/test`}
@@ -300,6 +416,55 @@ export function DeckDetail({ deckId }: Props) {
         >
           History
         </Link>
+      </div>
+
+      {/* Sub-decks */}
+      <div className="space-y-2">
+        <span className="text-micro text-ink-3 uppercase tracking-wide">
+          Sub-decks
+        </span>
+        {children.length > 0 && (
+          <ul className="flex flex-col gap-2">
+            {children.map((child) => {
+              const c = childCounts[child.deck.id] ?? { cards: 0, due: 0 };
+              return (
+                <li key={child.deck.id}>
+                  <Link
+                    href={`/decks/${child.deck.id}`}
+                    className="flex items-center justify-between gap-4 rounded-row bg-surface-1 border border-line px-4 py-3 hover:border-accent transition-colors"
+                  >
+                    <span className="text-body text-ink-1 truncate">
+                      {child.deck.name}
+                    </span>
+                    <span className="text-meta text-ink-3 shrink-0">
+                      {c.cards} card{c.cards !== 1 ? "s" : ""}
+                      {c.due > 0 && ` · ${c.due} due`}
+                      {child.children.length > 0 &&
+                        ` · ${child.children.length} sub-deck${child.children.length !== 1 ? "s" : ""}`}
+                    </span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <form onSubmit={handleAddSubDeck} className="flex gap-2">
+          <input
+            type="text"
+            value={newSubName}
+            onChange={(e) => setNewSubName(e.target.value)}
+            placeholder="New sub-deck name…"
+            maxLength={120}
+            className="flex-1 rounded-control bg-surface-2 border border-line-2 px-4 py-2 text-base text-ink-1 placeholder:text-ink-3 focus:outline-none focus:ring-2 focus:ring-accent"
+          />
+          <button
+            type="submit"
+            disabled={!newSubName.trim()}
+            className="text-micro rounded-chip bg-accent-soft text-accent-hi px-3 py-1.5 hover:opacity-80 transition-opacity disabled:opacity-50"
+          >
+            + Add sub-deck
+          </button>
+        </form>
       </div>
 
       {/* Import / export */}

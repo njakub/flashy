@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import Link from "next/link";
 import { useRepositories } from "@/components/providers/RepositoryProvider";
+import { loadDeckSubtreeIds } from "@/lib/decks/subtree";
 import { useReloadOnSync } from "@/lib/sync/useReloadOnSync";
 import { cardLabelsById, formatDuration } from "@/lib/testHistory";
 import { CardContent } from "@/components/CardContent";
@@ -14,7 +15,7 @@ interface Props {
 }
 
 export function TestRunDetail({ deckId, runId }: Props) {
-  const { cards, testRuns } = useRepositories();
+  const { cards, decks, testRuns } = useRepositories();
   const [loading, setLoading] = useState(true);
   const [run, setRun] = useState<TestRun | null>(null);
   const [questions, setQuestions] = useState<TestRunQuestion[]>([]);
@@ -25,13 +26,14 @@ export function TestRunDetail({ deckId, runId }: Props) {
     const [r, qs, c] = await Promise.all([
       testRuns.getRunById(runId),
       testRuns.getQuestionsForRun(runId),
-      cards.getByDeck(deckId),
+      // Runs started from a parent deck include descendant decks' cards.
+      loadDeckSubtreeIds(decks, deckId).then((ids) => cards.getByDecks(ids)),
     ]);
     setRun(r ?? null);
     setQuestions(qs);
     setCardList(c);
     setLoading(false);
-  }, [testRuns, cards, runId, deckId]);
+  }, [testRuns, cards, decks, runId, deckId]);
 
   useReloadOnSync(load);
 

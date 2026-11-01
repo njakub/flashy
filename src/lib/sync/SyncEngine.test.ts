@@ -235,6 +235,7 @@ describe("applyDeck", () => {
       id: "d1",
       ownerId: "owner",
       name: "local-name",
+      parentId: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
       deletedAt: null,
@@ -251,6 +252,7 @@ describe("applyDeck", () => {
       id: "d1",
       ownerId: "owner",
       name: "local-name",
+      parentId: null,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:20:00.000Z", // newer than wire
       deletedAt: null,
@@ -266,6 +268,37 @@ describe("applyDeck", () => {
     await applyDeck(wireDeck({ deletedAt: "2026-01-01T00:15:00.000Z" }));
     const local = await db.decks.get("d1");
     expect(local?.deletedAt).toBe("2026-01-01T00:15:00.000Z");
+  });
+
+  it("applies a wire parentId, including null (moved to top level)", async () => {
+    await applyDeck(wireDeck({ parentId: "parent" }));
+    expect((await db.decks.get("d1"))?.parentId).toBe("parent");
+    await applyDeck(
+      wireDeck({ parentId: null, updatedAt: "2026-01-01T00:30:00.000Z" }),
+    );
+    expect((await db.decks.get("d1"))?.parentId).toBeNull();
+  });
+
+  it("a wire row without parentId (server not yet deployed) preserves the local parent", async () => {
+    await db.decks.put({
+      id: "d1",
+      ownerId: "owner",
+      name: "local-name",
+      parentId: "parent",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      deletedAt: null,
+      dirty: 1,
+    });
+    await applyDeck(wireDeck());
+    const local = await db.decks.get("d1");
+    expect(local?.name).toBe("wire-name");
+    expect(local?.parentId).toBe("parent");
+  });
+
+  it("a new deck from a wire row without parentId defaults to top level", async () => {
+    await applyDeck(wireDeck());
+    expect((await db.decks.get("d1"))?.parentId).toBeNull();
   });
 });
 

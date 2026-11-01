@@ -55,10 +55,11 @@ Sync triggers, all in `AuthProvider`:
 
 There is no real-time push — a background sync's pulled rows won't appear in the UI unless something re-fetches. `src/lib/sync/syncEvents.ts` (`notifySyncApplied()`, fired by `SyncEngine` after applying a non-empty pull) plus the `useReloadOnSync(load)` hook (`src/lib/sync/useReloadOnSync.ts`) is how DeckList/DeckDetail/TestHistory/TestRunDetail pick up changes pulled from another device without a manual refresh. **`StudySession`/`TestSession` deliberately don't use this hook** — re-fetching the due-card queue mid-session on a background sync would yank cards out from under an in-progress review, so those two intentionally only load once per session.
 
-`src/lib/sync/wire.ts` is a hand-written mirror of `flashy-api`'s `src/sync/sync.schema.ts` / `sync.types.ts` wire protocol — the two projects deploy independently, so this must be changed by hand in both places if the protocol changes.
+`src/lib/sync/wire.ts` is a hand-written mirror of `flashy-api`'s `src/sync/sync.schema.ts` / `sync.types.ts` wire protocol — the two projects deploy independently, so this must be changed by hand in both places if the protocol changes. As of the `flashy-mobile` companion app (see `docs/plans/flashy-mobile.md`), the protocol is mirrored in a **third** place too: `flashy-mobile/src/lib/sync/wire.ts`. A protocol change must be applied by hand to all three.
 
 ### Data model (`src/lib/types.ts`)
 
+- `Deck.parentId` (nullable) nests decks — any deck can hold sub-decks *and* its own cards. It's a content field (synced LWW with `name`); there's no server FK and no server-side subtree cascade. All tree logic lives in the pure helpers in `src/lib/decks/tree.ts` (`buildDeckTree`, `subtreeIds`, `ancestors`, `wouldCreateCycle`), which tolerate sync-produced orphans (→ rendered top-level) and cycles (→ broken at the smallest id) without writing anything back. That file is **hand-mirrored** at `flashy-mobile/src/lib/decks/tree.ts`. `DexieDeckRepository.update` rejects moves into a deck's own subtree; `delete` tombstones the whole subtree.
 - `Deck` / `Card` — `Card.scheduling: SchedulingState` holds the SM-2 state (`easeFactor`, `intervalDays`, `dueAt`, `reps`, `lapses`, `lastReviewedAt`). `lastReviewedAt` is stamped by the scheduler on every review and used only by sync (reconciles scheduling independently from content — see "Sync" above); it's `null` until the card's first review. `Card.alternateAnswers` are extra accepted phrasings used only for grading, not shown as the canonical answer.
 - `TestRun` / `TestRunQuestion` — test-mode history. `TestRunQuestion` snapshots the card's front/back at attempt time so history stays accurate if the card is later edited/deleted. `outcome` is always resolved (`"correct" | "incorrect"`) before persisting — `"ambiguous"` (from `GradeResult`) is never written; the user must self-grade first.
 - `CardStats` is derived (attempts/correct per card), computed from `TestRunQuestion` rows via `TestRunRepository.getStatsByCards` — never stored, and implemented as one grouped query rather than N per-card queries.
@@ -67,9 +68,10 @@ There is no real-time push — a background sync's pulled rows won't appear in t
 ### Routes / functional areas
 
 - `/login` — register or sign in (`src/app/login/page.tsx`); one form, toggles mode client-side.
-- `/` — list and create decks (`DeckList.tsx`).
-- `/decks/[deckId]` — deck detail: list/add/edit/delete cards, rename/delete deck, export/import cards as JSON (`DeckDetail.tsx`). Deck deletion cascades to cards and test history, with a confirmation dialog.
+- `/` — list and create decks (`DeckList.tsx`) as a collapsible tree with rolled-up (own + descendant) card/due counts.
+- `/decks/[deckId]` — deck detail: breadcrumb, sub-decks list + add sub-deck, "Move to…" (excludes its own subtree), list/add/edit/delete cards (own cards only), rename/delete deck, export/import cards as JSON (`DeckDetail.tsx`). Deck deletion cascades to every sub-deck plus all their cards and test history, with a confirmation dialog stating the counts.
 - `/decks/[deckId]/cards/new`, `/decks/[deckId]/cards/[cardId]/edit` — card create/edit form (`CardForm.tsx`).
+- Study and Test on a deck draw from its **whole subtree** (`loadDeckSubtreeIds`, `src/lib/decks/subtree.ts`); a test run is recorded against the deck it was started from.
 - `/decks/[deckId]/study` — flashcard (Study) mode (`StudySession.tsx`): shows due cards (due ≤ now), reveal-answer flow, rate Again/Hard/Good/Easy → SM-2 → persisted scheduling state.
 - `/decks/[deckId]/test` — Test mode (`TestSession.tsx`): free-text answer graded by the embedding grader (see seam 2 above).
 - `/decks/[deckId]/history`, `/decks/[deckId]/history/[runId]` — test history (`TestHistory.tsx`, `TestRunDetail.tsx`): runs list (overall or grouped by label) and per-run question detail.

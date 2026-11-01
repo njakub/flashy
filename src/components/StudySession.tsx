@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { useRepositories } from "@/components/providers/RepositoryProvider";
+import { loadDeckSubtreeIds } from "@/lib/decks/subtree";
 import { scheduler } from "@/lib/scheduler";
 import { distinctLabels } from "@/lib/testHistory";
 import { FLAGGED_LABEL } from "@/lib/constants";
@@ -44,7 +45,7 @@ function matchesLabels(card: Card, selectedLabels: string[]): boolean {
 }
 
 export function StudySession({ deckId }: Props) {
-  const { cards } = useRepositories();
+  const { cards, decks } = useRepositories();
   const [queue, setQueue] = useState<Card[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
@@ -61,7 +62,9 @@ export function StudySession({ deckId }: Props) {
     async (studyAhead = false) => {
       webSpeechSpeaker.cancel();
       setLoading(true);
-      const allDeckCards = await cards.getByDeck(deckId);
+      // A parent deck studies its whole subtree.
+      const deckIds = await loadDeckSubtreeIds(decks, deckId);
+      const allDeckCards = await cards.getByDecks(deckIds);
       const matching = allDeckCards.filter((c) =>
         matchesLabels(c, selectedLabels),
       );
@@ -69,7 +72,7 @@ export function StudySession({ deckId }: Props) {
       setDeckTotalCount(allDeckCards.length);
       setDeckFilteredCount(matching.length);
 
-      let due = (await cards.getDueCards(deckId, new Date())).filter((c) =>
+      let due = (await cards.getDueCardsInDecks(deckIds, new Date())).filter((c) =>
         matchesLabels(c, selectedLabels),
       );
       if (due.length === 0 && studyAhead) due = matching;
@@ -87,7 +90,7 @@ export function StudySession({ deckId }: Props) {
       setStudyingAhead(studyAhead && due.length > 0);
       setLoading(false);
     },
-    [cards, deckId, selectedLabels],
+    [cards, decks, deckId, selectedLabels],
   );
 
   const loadDue = useCallback(() => load(false), [load]);

@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, type FormEvent } from "react";
 import Link from "next/link";
 import { useRepositories } from "@/components/providers/RepositoryProvider";
+import { loadDeckSubtreeIds } from "@/lib/decks/subtree";
 import { useAuth } from "@/components/providers/AuthProvider";
 import { useSettings } from "@/components/providers/SettingsProvider";
 import { scheduler } from "@/lib/scheduler";
@@ -105,7 +106,7 @@ function friendlyMicError(raw: string): string {
 }
 
 export function TestSession({ deckId }: Props) {
-  const { cards, testRuns } = useRepositories();
+  const { cards, decks, testRuns } = useRepositories();
   const { ownerId, status, getAccessToken } = useAuth();
   const { gradingDefault } = useSettings();
   const { preset: thresholdPreset } = useThresholdPrefs();
@@ -251,12 +252,16 @@ export function TestSession({ deckId }: Props) {
       setPhase("loading");
       setGradeError(null);
       preloadEmbeddingModel();
-      const all = await cards.getByDeck(deckId);
+      // A parent deck tests its whole subtree; the run is still recorded
+      // against deckId (the deck the test was started from).
+      const all = await cards.getByDecks(
+        await loadDeckSubtreeIds(decks, deckId),
+      );
       setPool(all);
       setPhase("pick");
     }
     void load();
-  }, [cards, deckId]);
+  }, [cards, decks, deckId]);
 
   useEffect(() => {
     if (phase === "question") {

@@ -139,6 +139,7 @@ function toWireDeckPush(d: StoredDeck) {
   return {
     id: d.id,
     name: d.name,
+    parentId: d.parentId ?? null,
     createdAt: d.createdAt,
     updatedAt: d.updatedAt,
     deletedAt: d.deletedAt,
@@ -218,6 +219,10 @@ export async function applyDeck(wire: WireDeck): Promise<void> {
     id: wire.id,
     ownerId: wire.ownerId,
     name: wire.name,
+    // A not-yet-deployed server omits parentId — keep the local value
+    // rather than flattening the hierarchy.
+    parentId:
+      wire.parentId !== undefined ? wire.parentId : (local?.parentId ?? null),
     createdAt: wire.createdAt,
     updatedAt: wire.updatedAt,
     deletedAt: wire.deletedAt,
